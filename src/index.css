@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --cream: #F5EDD6;
+  --forest: #2D3D1E;
+  --sage: #5C7A3E;
+  --gold: #D4943A;
+  --terracotta: #8B4A35;
+  --deep-teal: #2D5A3D;
+  --white-warm: #FDF9F3;
+}
+
+@layer base {
+  html {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    background-color: var(--cream);
+    color: var(--forest);
+  }
+
+  h1, h2, h3 {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+
+  .font-mono {
+    font-family: 'DM Mono', monospace;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white-warm rounded-xl border border-forest/10 shadow-sm p-4;
+  }
+
+  .btn-primary {
+    @apply bg-gold text-white rounded-lg px-4 py-2 font-medium text-sm
+           hover:bg-gold/90 active:scale-95 transition-all;
+  }
+
+  .btn-secondary {
+    @apply bg-transparent border border-forest/30 text-forest rounded-lg px-4 py-2
+           font-medium text-sm hover:bg-forest/5 active:scale-95 transition-all;
+  }
+
+  .tab-nav {
+    @apply flex items-center justify-around fixed bottom-0 left-0 right-0
+           bg-deep-teal text-white/70 border-t border-white/10 z-50;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .tab-nav-item {
+    @apply flex flex-col items-center gap-0.5 py-3 px-4 text-xs font-medium
+           transition-colors hover:text-white;
+  }
+
+  .tab-nav-item.active {
+    @apply text-gold;
+  }
+
+  .input {
+    @apply w-full border border-forest/20 rounded-lg px-3 py-2.5
+           bg-white-warm text-forest placeholder:text-forest/40 text-sm
+           focus:outline-none focus:ring-2 focus:ring-sage;
+  }
+
+  .section-label {
+    @apply text-xs text-forest/50 uppercase tracking-wide mb-3 font-sans;
+  }
+}
