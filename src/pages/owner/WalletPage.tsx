@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
 import type { Reservation, ReservationType } from '@/types'
+import type { Json } from '@/types/database'
 
 // ── constants ──────────────────────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ interface FormState {
   time: string
   address: string
   cost: string
-  details: Record<string, unknown>
+  details: Json
 }
 
 const EMPTY_FORM: FormState = {
@@ -313,7 +314,7 @@ function ParseEmailFlow({
         date: json.date ?? '',
         time: json.time ?? '',
         address: json.address ?? '',
-        details: json.details ?? {},
+        details: (json.details ?? {}) as Json,
       })
       setStep('review')
     } catch (e) {
