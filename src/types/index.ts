@@ -1,4 +1,6 @@
 // App-level TypeScript types — derived from Database type in database.ts
+import type { Json } from './database'
+export type { Json }
 
 // ============================================================
 // OWNER TYPES (full columns, authenticated only)
@@ -74,7 +76,7 @@ export interface Reservation {
   time: string | null
   provider: string | null
   address: string | null
-  details: Record<string, unknown>
+  details: Json | null
   raw_email_text: string | null // owner-only
   cost: number | null           // owner-only
 }

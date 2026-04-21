@@ -3,8 +3,7 @@ import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
-import type { Reservation, ReservationType } from '@/types'
-import type { Json } from '@/types/database'
+import type { Reservation, ReservationType, Json } from '@/types'
 
 // ── constants ──────────────────────────────────────────────────────────────────
 
@@ -84,7 +83,9 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const detailEntries = res.details ? Object.entries(res.details as Record<string, unknown>).filter(([, v]) => v != null) : []
+  const detailEntries = res.details && typeof res.details === 'object' && !Array.isArray(res.details)
+    ? Object.entries(res.details as Record<string, Json>).filter(([, v]) => v != null)
+    : []
 
   return (
     <div className="card">
@@ -227,11 +228,11 @@ function ReservationForm({
         </div>
 
         {/* Parsed details (read-only display if present) */}
-        {Object.keys(f.details).length > 0 && (
+        {f.details && typeof f.details === 'object' && !Array.isArray(f.details) && Object.keys(f.details).length > 0 && (
           <div className="col-span-2">
             <p className="text-xs text-forest/40 uppercase tracking-wide mb-1.5">Parsed details</p>
             <div className="bg-cream rounded-lg p-3 space-y-1">
-              {Object.entries(f.details).filter(([, v]) => v != null).map(([k, v]) => (
+              {Object.entries(f.details as Record<string, Json>).filter(([, v]) => v != null).map(([k, v]) => (
                 <div key={k} className="flex gap-2 text-xs">
                   <span className="text-forest/50 shrink-0">{detailLabel(k)}:</span>
                   <span className="text-forest">{String(v)}</span>
@@ -261,12 +262,10 @@ function ReservationForm({
 type ParseStep = 'paste' | 'parsing' | 'review' | 'error'
 
 function ParseEmailFlow({
-  tripId,
   onSave,
   onCancel,
   saving,
 }: {
-  tripId: string
   onSave: (data: FormState, rawEmail: string) => void
   onCancel: () => void
   saving: boolean
@@ -535,7 +534,6 @@ export default function WalletPage() {
           </p>
         )}
         <ParseEmailFlow
-          tripId={tripId}
           onSave={(form, raw) => handleSave(form, raw)}
           onCancel={() => setAddMode(null)}
           saving={saveMutation.isPending}
