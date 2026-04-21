@@ -71,7 +71,7 @@ export default function SettingsPage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error('Not signed in')
-      let currentTripId = tripId
+      let currentTripId = trip?.id ?? tripId
 
       if (trip) {
         const { error } = await supabase

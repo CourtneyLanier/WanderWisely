@@ -9,7 +9,7 @@ import type { Day, Lodging, Activity, LodgingType, ActivityType, MealSlot } from
 
 function fmt(dateStr: string | null) {
   if (!dateStr) return ''
-  return new Date(dateStr).toLocaleDateString('en-US', {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
     weekday: 'long', month: 'short', day: 'numeric',
   })
 }
@@ -25,6 +25,7 @@ function DayHeader({ day }: { day: Day }) {
   const [hours, setHours] = useState(String(day.drive_hours ?? ''))
   const [notes, setNotes] = useState(day.notes ?? '')
   const [date, setDate] = useState(day.date ?? '')
+  const [departureTime, setDepartureTime] = useState(day.departure_time ?? '')
 
   useEffect(() => {
     setStartLoc(day.start_location ?? '')
@@ -33,6 +34,7 @@ function DayHeader({ day }: { day: Day }) {
     setHours(String(day.drive_hours ?? ''))
     setNotes(day.notes ?? '')
     setDate(day.date ?? '')
+    setDepartureTime(day.departure_time ?? '')
   }, [day])
 
   const saveMutation = useMutation({
@@ -41,6 +43,7 @@ function DayHeader({ day }: { day: Day }) {
         .from('days')
         .update({
           date: date || null,
+          departure_time: departureTime || null,
           start_location: startLoc || null,
           end_location: endLoc || null,
           drive_miles: miles ? parseInt(miles) : null,
@@ -70,8 +73,10 @@ function DayHeader({ day }: { day: Day }) {
               {day.start_location || '?'} → {day.end_location || '?'}
             </p>
           )}
-          {!editing && (day.drive_miles || day.drive_hours) && (
-            <p className="text-xs text-forest/50">
+          {!editing && (day.drive_miles || day.drive_hours || day.departure_time) && (
+            <p className="text-xs text-forest/50 mt-0.5">
+              {day.departure_time ? `Leave ${day.departure_time.slice(0, 5)}` : ''}
+              {day.departure_time && (day.drive_miles || day.drive_hours) ? ' · ' : ''}
               {day.drive_miles ? `${day.drive_miles} mi` : ''}
               {day.drive_miles && day.drive_hours ? ' · ' : ''}
               {day.drive_hours ? `${day.drive_hours} hrs drive` : ''}
@@ -91,9 +96,15 @@ function DayHeader({ day }: { day: Day }) {
 
       {editing && (
         <div className="space-y-3 pt-2 border-t border-forest/10">
-          <div>
-            <label className="block text-sm text-forest mb-1">Date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm text-forest mb-1">Date</label>
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
+            </div>
+            <div>
+              <label className="block text-sm text-forest mb-1">Leave by</label>
+              <input type="time" value={departureTime} onChange={(e) => setDepartureTime(e.target.value)} className="input" />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -432,10 +443,14 @@ const EMPTY_ACTIVITY = {
 function ActivityForm({
   dayId,
   initial,
+  initialType,
+  initialSlot,
   onDone,
 }: {
   dayId: string
   initial?: Activity
+  initialType?: ActivityType
+  initialSlot?: MealSlot | null
   onDone: () => void
 }) {
   const queryClient = useQueryClient()
@@ -453,7 +468,7 @@ function ActivityForm({
           notes: initial.notes ?? '',
           is_booked: initial.is_booked,
         }
-      : EMPTY_ACTIVITY
+      : { ...EMPTY_ACTIVITY, type: initialType ?? 'main', meal_slot: initialSlot ?? null }
   )
 
   const set = (key: keyof typeof EMPTY_ACTIVITY) =>
@@ -584,6 +599,7 @@ const MEAL_ICONS: Record<MealSlot, string> = {
 function ActivitiesSection({ dayId }: { dayId: string }) {
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
+  const [addingSlot, setAddingSlot] = useState<MealSlot | null>(null)
   const [editing, setEditing] = useState<Activity | undefined>(undefined)
 
   const { data: activities = [] } = useQuery({
@@ -628,7 +644,8 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
                   {!meal && (
                     <button
                       onClick={() => {
-                        setAdding(true)
+                        setAddingSlot(slot)
+                        setAdding(false)
                         setEditing(undefined)
                       }}
                       className="text-xs text-sage hover:text-forest transition-colors"
@@ -650,7 +667,7 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => { setEditing(meal); setAdding(false) }}
+                      <button onClick={() => { setEditing(meal); setAdding(false); setAddingSlot(null) }}
                         className="text-xs text-sage hover:text-forest transition-colors">Edit</button>
                       <button onClick={() => deleteMutation.mutate(meal.id)}
                         className="text-xs text-terracotta hover:text-forest transition-colors">✕</button>
@@ -660,6 +677,14 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
                 {editing?.id === meal?.id && (
                   <ActivityForm dayId={dayId} initial={editing}
                     onDone={() => setEditing(undefined)} />
+                )}
+                {addingSlot === slot && (
+                  <ActivityForm
+                    dayId={dayId}
+                    initialType="meal"
+                    initialSlot={slot}
+                    onDone={() => setAddingSlot(null)}
+                  />
                 )}
               </div>
             )
@@ -672,7 +697,7 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
         <div className="flex items-center justify-between mb-2">
           <p className="section-label mb-0">Activities</p>
           <button
-            onClick={() => { setAdding(true); setEditing(undefined) }}
+            onClick={() => { setAdding(true); setEditing(undefined); setAddingSlot(null) }}
             className="text-xs text-sage hover:text-forest transition-colors"
           >
             + Add
@@ -687,7 +712,7 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
                   onDone={() => setEditing(undefined)} />
               ) : (
                 <ActivityCard key={a.id} activity={a}
-                  onEdit={() => { setEditing(a); setAdding(false) }}
+                  onEdit={() => { setEditing(a); setAdding(false); setAddingSlot(null) }}
                   onDelete={() => deleteMutation.mutate(a.id)} />
               )
             )}

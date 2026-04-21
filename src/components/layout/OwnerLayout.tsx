@@ -1,6 +1,8 @@
 import { Outlet, useNavigate } from 'react-router-dom'
 import TabNav from './TabNav'
 import { useAppStore } from '@/store/useAppStore'
+import InstallPrompt from '@/components/pwa/InstallPrompt'
+import OfflineBanner from '@/components/pwa/OfflineBanner'
 
 export default function OwnerLayout() {
   const signOut = useAppStore((s) => s.signOut)
@@ -13,19 +15,19 @@ export default function OwnerLayout() {
 
   return (
     <div className="min-h-screen bg-cream pb-20">
-      {/* Minimal top bar — will be replaced/absorbed by page headers in design pass */}
-      <div className="flex items-center justify-between px-4 pt-safe pt-3 pb-2">
-        <img src="/logo-words.png" alt="WanderWisely" className="h-6 object-contain" />
+      <OfflineBanner />
+      <div className="flex items-center justify-between px-4 pt-safe pt-3 pb-2.5 border-b border-forest/[0.07]">
+        <img src="/logo-words.png" alt="WanderWisely" className="h-7 object-contain" />
         <button
           onClick={handleSignOut}
-          className="text-xs text-forest/50 hover:text-forest transition-colors"
+          className="text-[11px] text-forest/40 hover:text-forest/70 transition-colors font-medium tracking-wide"
         >
           Sign out
         </button>
       </div>
-
       <Outlet />
       <TabNav />
+      <InstallPrompt />
     </div>
   )
 }

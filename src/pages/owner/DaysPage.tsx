@@ -7,7 +7,7 @@ import type { Day } from '@/types'
 
 function fmt(dateStr: string | null) {
   if (!dateStr) return '—'
-  return new Date(dateStr).toLocaleDateString('en-US', {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -126,7 +126,7 @@ export default function DaysPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-medium text-deep-teal bg-deep-teal/10 rounded px-1.5 py-0.5">
+                    <span className="text-xs font-medium text-deep-teal bg-deep-teal/[0.09] rounded-md px-1.5 py-0.5 font-sans tracking-wide">
                       Day {day.day_number}
                     </span>
                     <span className="text-xs text-forest/50">{fmt(day.date)}</span>
@@ -140,8 +140,10 @@ export default function DaysPage() {
                     <p className="text-sm text-forest/40 italic">No route set</p>
                   )}
 
-                  {(day.drive_miles || day.drive_hours) && (
+                  {(day.drive_miles || day.drive_hours || day.departure_time) && (
                     <p className="text-xs text-forest/50 mt-0.5">
+                      {day.departure_time ? `Leave ${day.departure_time.slice(0, 5)}` : ''}
+                      {day.departure_time && (day.drive_miles || day.drive_hours) ? ' · ' : ''}
                       {day.drive_miles ? `${day.drive_miles} mi` : ''}
                       {day.drive_miles && day.drive_hours ? ' · ' : ''}
                       {day.drive_hours ? `${day.drive_hours} hrs` : ''}

@@ -2,14 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* iOS safe-area inset helpers */
+.pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.pl-safe { padding-left: env(safe-area-inset-left, 0px); }
+.pr-safe { padding-right: env(safe-area-inset-right, 0px); }
+
 :root {
-  --cream: #F5EDD6;
-  --forest: #2D3D1E;
-  --sage: #5C7A3E;
-  --gold: #D4943A;
-  --terracotta: #8B4A35;
-  --deep-teal: #2D5A3D;
-  --white-warm: #FDF9F3;
+  --cream:        #F5EDD6;
+  --forest:       #2D3D1E;
+  --sage:         #5C7A3E;
+  --gold:         #D4943A;
+  --terracotta:   #8B4A35;
+  --deep-teal:    #2D5A3D;
+  --white-warm:   #FDF9F3;
 }
 
 @layer base {
@@ -17,6 +23,8 @@
     font-family: 'DM Sans', system-ui, sans-serif;
     background-color: var(--cream);
     color: var(--forest);
+    /* Subtle paper grain texture — SVG fractal noise at 4% opacity */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
   }
 
   h1, h2, h3 {
@@ -30,28 +38,36 @@
 
 @layer components {
   .card {
-    @apply bg-white-warm rounded-xl border border-forest/10 shadow-sm p-4;
+    @apply bg-white-warm rounded-xl border border-forest/[0.11] p-4;
+    box-shadow: 0 1px 3px rgba(45,61,30,0.07), 0 0 0 1px rgba(45,61,30,0.03);
+  }
+
+  /* Inset panel inside a card — cream bg for contrast */
+  .card-inset {
+    @apply bg-cream/70 rounded-lg border border-forest/[0.08] p-3;
   }
 
   .btn-primary {
     @apply bg-gold text-white rounded-lg px-4 py-2 font-medium text-sm
-           hover:bg-gold/90 active:scale-95 transition-all;
+           hover:bg-gold/90 active:scale-95 transition-all
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100;
   }
 
   .btn-secondary {
-    @apply bg-transparent border border-forest/30 text-forest rounded-lg px-4 py-2
-           font-medium text-sm hover:bg-forest/5 active:scale-95 transition-all;
+    @apply bg-transparent border border-forest/25 text-forest rounded-lg px-4 py-2
+           font-medium text-sm hover:bg-forest/5 active:scale-95 transition-all
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100;
   }
 
   .tab-nav {
     @apply flex items-center justify-around fixed bottom-0 left-0 right-0
-           bg-deep-teal text-white/70 border-t border-white/10 z-50;
+           bg-deep-teal text-white/55 border-t border-black/20 z-50;
     padding-bottom: env(safe-area-inset-bottom);
   }
 
   .tab-nav-item {
-    @apply flex flex-col items-center gap-0.5 py-3 px-4 text-xs font-medium
-           transition-colors hover:text-white;
+    @apply flex flex-col items-center gap-0.5 py-3 px-2 text-[11px] font-medium
+           transition-colors hover:text-white/90;
   }
 
   .tab-nav-item.active {
@@ -60,11 +76,12 @@
 
   .input {
     @apply w-full border border-forest/20 rounded-lg px-3 py-2.5
-           bg-white-warm text-forest placeholder:text-forest/40 text-sm
-           focus:outline-none focus:ring-2 focus:ring-sage;
+           bg-white-warm text-forest placeholder:text-forest/35 text-sm
+           focus:outline-none focus:ring-2 focus:ring-sage/40 focus:border-sage/50
+           transition-colors;
   }
 
   .section-label {
-    @apply text-xs text-forest/50 uppercase tracking-wide mb-3 font-sans;
+    @apply text-[10px] text-forest/45 uppercase tracking-widest mb-3 font-sans font-semibold;
   }
 }

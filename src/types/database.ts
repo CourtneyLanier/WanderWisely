@@ -22,6 +22,7 @@ type DayInsert = {
   trip_id: string
   day_number: number
   date?: string | null
+  departure_time?: string | null
   start_location?: string | null
   end_location?: string | null
   drive_miles?: number | null
@@ -130,6 +131,7 @@ export interface Database {
           trip_id: string
           day_number: number
           date: string | null
+          departure_time: string | null
           start_location: string | null
           end_location: string | null
           drive_miles: number | null
@@ -255,6 +257,7 @@ export interface Database {
           trip_id: string
           day_number: number
           date: string | null
+          departure_time: string | null
           start_location: string | null
           end_location: string | null
           drive_miles: number | null
