@@ -57,4 +57,14 @@
   .tab-nav-item.active {
     @apply text-gold;
   }
+
+  .input {
+    @apply w-full border border-forest/20 rounded-lg px-3 py-2.5
+           bg-white-warm text-forest placeholder:text-forest/40 text-sm
+           focus:outline-none focus:ring-2 focus:ring-sage;
+  }
+
+  .section-label {
+    @apply text-xs text-forest/50 uppercase tracking-wide mb-3 font-sans;
+  }
 }

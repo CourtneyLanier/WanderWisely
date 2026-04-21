@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip install pypdf --quiet)",
+      "Bash(python -c ' *)",
+      "Bash(python -m pip install pdf2image pillow --quiet)",
+      "Bash(python -c \"from pdf2image import convert_from_path; print\\('pdf2image ok'\\)\")",
+      "Bash(python -m pip install pytesseract --quiet)",
+      "Bash(cmd /c \"rmdir /s /q node_modules\")",
+      "Bash(cmd /c \"rmdir /s /q public\")",
+      "Bash(cmd /c \"rmdir /s /q C:\\\\Users\\\\Jered\\\\MyApps\\\\WanderWisely\\\\node_modules\")",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(cmd /c \"rmdir /s /q C:\\\\Users\\\\Jered\\\\MyApps\\\\WanderWisely\\\\.angular\")",
+      "Bash(git push *)",
+      "Bash(git -C /c/Users/Jered/MyApps/WanderWisely branch -a)",
+      "Bash(gh repo *)",
+      "Bash(git -C /c/Users/Jered/MyApps/WanderWisely push origin 1000-home:main --force)",
+      "Bash(git -C /c/Users/Jered/MyApps/WanderWisely push origin --delete 1234-wanderwisely-init)",
+      "Bash(git -C /c/Users/Jered/MyApps/WanderWisely branch -d 1234-wanderwisely-init)",
+      "Bash(git -C /c/Users/Jered/MyApps/WanderWisely branch -D 1234-wanderwisely-init)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

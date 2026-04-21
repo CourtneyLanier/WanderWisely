@@ -5,20 +5,26 @@ import { useAppStore } from '@/store/useAppStore'
 
 export default function RequireAuth() {
   const { user, setUser } = useAppStore()
-  const [checking, setChecking] = useState(!user)
+  // null = still checking; false = confirmed no session
+  const [checking, setChecking] = useState(true)
 
   useEffect(() => {
-    if (user) return
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user)
+    // onAuthStateChange fires immediately with INITIAL_SESSION event,
+    // giving us the current session without a separate getSession() call.
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
       setChecking(false)
     })
-  }, [user, setUser])
+
+    return () => subscription.unsubscribe()
+  }, [setUser])
 
   if (checking) {
     return (
       <div className="min-h-screen bg-cream flex items-center justify-center">
-        <p className="text-forest/50 text-sm">Loading…</p>
+        <img src="/logo.png" alt="" className="w-16 h-16 animate-pulse opacity-60" />
       </div>
     )
   }

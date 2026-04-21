@@ -14,6 +14,27 @@ import GuestDaysPage from '@/pages/guest/GuestDaysPage'
 import GuestWalletPage from '@/pages/guest/GuestWalletPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 
+// If Supabase emails a link to the site root (redirect URL not in allowlist),
+// the token arrives in the hash or as ?code=. Forward it to the callback route
+// so it isn't stripped by a plain <Navigate> replacement.
+function RootRedirect() {
+  const hash = window.location.hash      // implicit flow: #access_token=…
+  const search = window.location.search  // PKCE flow:     ?code=…
+
+  const hasToken =
+    hash.includes('access_token') ||
+    hash.includes('type=magiclink') ||
+    hash.includes('type=recovery') ||
+    search.includes('code=')
+
+  if (hasToken) {
+    const suffix = hash || search
+    return <Navigate to={`/auth/callback${suffix}`} replace />
+  }
+
+  return <Navigate to="/overview" replace />
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -41,7 +62,8 @@ export default function App() {
         </Route>
 
         {/* Redirects */}
-        <Route path="/" element={<Navigate to="/overview" replace />} />
+        {/* Preserve hash/code so Supabase can process the magic link token */}
+        <Route path="/" element={<RootRedirect />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
