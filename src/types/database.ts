@@ -78,6 +78,7 @@ type ReservationInsert = {
   details?: Json
   raw_email_text?: string | null
   cost?: number | null
+  pdf_url?: string | null
 }
 
 type BudgetInsert = {
@@ -199,6 +200,7 @@ export interface Database {
           details: Json
           raw_email_text: string | null
           cost: number | null
+          pdf_url: string | null
         }
         Insert: ReservationInsert
         Update: Partial<ReservationInsert>

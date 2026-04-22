@@ -79,6 +79,7 @@ export interface Reservation {
   details: Json | null
   raw_email_text: string | null // owner-only
   cost: number | null           // owner-only
+  pdf_url: string | null        // owner-only
 }
 
 export interface Budget {

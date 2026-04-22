@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
@@ -147,6 +147,16 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
                 ))}
               </div>
             </div>
+          )}
+          {res.pdf_url && (
+            <a
+              href={res.pdf_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-deep-teal underline"
+            >
+              📄 View confirmation PDF
+            </a>
           )}
           <button
             onClick={onDelete}
@@ -396,9 +406,182 @@ function ParseEmailFlow({
   )
 }
 
+// ── UploadPdfFlow ──────────────────────────────────────────────────────────────
+
+type UploadStep = 'pick' | 'uploading' | 'parsing' | 'review' | 'error'
+
+function UploadPdfFlow({
+  onSave,
+  onCancel,
+  saving,
+}: {
+  onSave: (data: FormState, pdfUrl: string) => void
+  onCancel: () => void
+  saving: boolean
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [step, setStep] = useState<UploadStep>('pick')
+  const [parsed, setParsed] = useState<Partial<FormState>>({})
+  const [pdfUrl, setPdfUrl] = useState('')
+  const [error, setError] = useState('')
+
+  async function handleFile(file: File) {
+    setStep('uploading')
+    setError('')
+    try {
+      // Read as base64 for Claude
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      // Upload to Supabase Storage
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Not authenticated')
+      const path = `${user.id}/${Date.now()}_${file.name}`
+      const { error: uploadError } = await supabase.storage
+        .from('reservation-pdfs')
+        .upload(path, file, { contentType: 'application/pdf' })
+      if (uploadError) throw uploadError
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('reservation-pdfs')
+        .getPublicUrl(path)
+      setPdfUrl(publicUrl)
+
+      // Parse with Claude
+      setStep('parsing')
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY as string,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1024,
+          system: PARSE_SYSTEM_PROMPT,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+              },
+              { type: 'text', text: 'Parse this confirmation document.' },
+            ],
+          }],
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: { message: res.statusText } }))
+        throw new Error(err?.error?.message ?? res.statusText)
+      }
+
+      const data = await res.json()
+      const text: string = data.content?.[0]?.text ?? ''
+      const json = JSON.parse(text)
+
+      setParsed({
+        type: (json.type as ReservationType) ?? 'other',
+        title: json.title ?? '',
+        provider: json.provider ?? '',
+        confirmation_number: json.confirmation_number ?? '',
+        date: json.date ?? '',
+        time: json.time ?? '',
+        address: json.address ?? '',
+        details: (json.details ?? {}) as Json,
+      })
+      setStep('review')
+    } catch (e) {
+      setError((e as Error).message ?? 'Unknown error')
+      setStep('error')
+    }
+  }
+
+  if (step === 'pick') {
+    return (
+      <div className="space-y-4">
+        <p className="font-display text-lg text-forest">Upload Confirmation PDF</p>
+        <p className="text-sm text-forest/60">
+          Upload a PDF of your confirmation email — Claude reads it and fills everything in. The file is saved so you can pull it up offline.
+        </p>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }}
+        />
+        <div className="flex gap-2">
+          <button onClick={() => fileRef.current?.click()} className="btn-primary flex-1">
+            📄 Choose PDF
+          </button>
+          <button onClick={onCancel} className="btn-secondary px-4">Cancel</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (step === 'uploading') {
+    return (
+      <div className="text-center py-16 space-y-3">
+        <p className="text-3xl animate-pulse">📤</p>
+        <p className="font-display text-lg text-forest">Uploading…</p>
+      </div>
+    )
+  }
+
+  if (step === 'parsing') {
+    return (
+      <div className="text-center py-16 space-y-3">
+        <p className="text-3xl animate-pulse">✨</p>
+        <p className="font-display text-lg text-forest">Reading your confirmation…</p>
+        <p className="text-sm text-forest/50">Claude is extracting the details</p>
+      </div>
+    )
+  }
+
+  if (step === 'error') {
+    return (
+      <div className="space-y-4">
+        <p className="font-display text-lg text-forest">Something went wrong</p>
+        <div className="bg-terracotta/10 border border-terracotta/20 rounded-lg p-3">
+          <p className="text-sm text-terracotta">{error}</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => setStep('pick')} className="btn-secondary flex-1">Try again</button>
+          <button onClick={onCancel} className="btn-secondary flex-1">Cancel</button>
+        </div>
+      </div>
+    )
+  }
+
+  // review
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-sage text-sm">✓ Parsed successfully · PDF saved</span>
+      </div>
+      <ReservationForm
+        title="Review & save"
+        initial={parsed}
+        onSave={(data) => onSave(data, pdfUrl)}
+        onCancel={onCancel}
+        saving={saving}
+      />
+    </div>
+  )
+}
+
 // ── WalletPage ─────────────────────────────────────────────────────────────────
 
-type AddMode = null | 'choose' | 'manual' | 'parse'
+type AddMode = null | 'choose' | 'manual' | 'parse' | 'upload'
 
 export default function WalletPage() {
   const tripId = useAppStore((s) => s.tripId)
@@ -419,7 +602,7 @@ export default function WalletPage() {
   })
 
   const saveMutation = useMutation({
-    mutationFn: async ({ form, rawEmail }: { form: FormState; rawEmail?: string }) => {
+    mutationFn: async ({ form, rawEmail, pdfUrl }: { form: FormState; rawEmail?: string; pdfUrl?: string }) => {
       const { error } = await supabase.from('reservations').insert({
         trip_id: tripId!,
         type: form.type,
@@ -432,6 +615,7 @@ export default function WalletPage() {
         cost: form.cost ? parseFloat(form.cost) : null,
         details: form.details,
         raw_email_text: rawEmail ?? null,
+        pdf_url: pdfUrl ?? null,
       })
       if (error) throw error
     },
@@ -449,8 +633,8 @@ export default function WalletPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reservations', tripId] }),
   })
 
-  function handleSave(form: FormState, rawEmail?: string) {
-    saveMutation.mutate({ form, rawEmail })
+  function handleSave(form: FormState, rawEmail?: string, pdfUrl?: string) {
+    saveMutation.mutate({ form, rawEmail, pdfUrl })
   }
 
   // ── not set up ──
@@ -478,14 +662,26 @@ export default function WalletPage() {
         <p className="text-sm text-forest/60 mb-4">How would you like to add a reservation?</p>
         <div className="space-y-3">
           <button
+            onClick={() => setAddMode('upload')}
+            className="card w-full text-left hover:border-sage/40 hover:bg-sage/5 transition-colors"
+          >
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">📄</span>
+              <div>
+                <p className="font-medium text-forest">Upload PDF</p>
+                <p className="text-sm text-forest/50 mt-0.5">Upload your confirmation PDF — Claude reads it, fills everything in, and saves the file for offline access</p>
+              </div>
+            </div>
+          </button>
+          <button
             onClick={() => setAddMode('parse')}
             className="card w-full text-left hover:border-sage/40 hover:bg-sage/5 transition-colors"
           >
             <div className="flex items-start gap-3">
               <span className="text-2xl">✨</span>
               <div>
-                <p className="font-medium text-forest">Parse from email</p>
-                <p className="text-sm text-forest/50 mt-0.5">Paste your confirmation email — Claude fills everything in automatically</p>
+                <p className="font-medium text-forest">Paste email text</p>
+                <p className="text-sm text-forest/50 mt-0.5">Copy and paste your confirmation email — Claude fills everything in automatically</p>
               </div>
             </div>
           </button>
@@ -535,6 +731,23 @@ export default function WalletPage() {
         )}
         <ParseEmailFlow
           onSave={(form, raw) => handleSave(form, raw)}
+          onCancel={() => setAddMode(null)}
+          saving={saveMutation.isPending}
+        />
+      </div>
+    )
+  }
+
+  if (addMode === 'upload') {
+    return (
+      <div className="p-4 pt-6 pb-10">
+        {saveMutation.isError && (
+          <p className="text-sm text-terracotta bg-terracotta/10 rounded-lg px-3 py-2 mb-3">
+            {(saveMutation.error as Error).message}
+          </p>
+        )}
+        <UploadPdfFlow
+          onSave={(form, url) => handleSave(form, undefined, url)}
           onCancel={() => setAddMode(null)}
           saving={saveMutation.isPending}
         />
