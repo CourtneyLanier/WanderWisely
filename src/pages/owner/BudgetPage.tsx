@@ -96,7 +96,8 @@ function ReceiptScanFlow({
 
       const data = await res.json()
       const text: string = data.content?.[0]?.text ?? ''
-      const json: ParsedReceipt = JSON.parse(text)
+      const raw = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+      const json: ParsedReceipt = JSON.parse(raw)
 
       setParsed(json)
       setLabel(json.label ?? '')

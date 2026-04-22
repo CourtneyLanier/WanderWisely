@@ -34,6 +34,11 @@ If a field cannot be determined, use null.`
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
+function extractJson(raw: string): Record<string, unknown> {
+  const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  return JSON.parse(stripped) as Record<string, unknown>
+}
+
 function fmtDate(s: string | null) {
   if (!s) return null
   return new Date(s + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -313,16 +318,17 @@ function ParseEmailFlow({
 
       const data = await res.json()
       const text: string = data.content?.[0]?.text ?? ''
-      const json = JSON.parse(text)
+      const json = extractJson(text)
+      const s = (k: string) => (typeof json[k] === 'string' ? (json[k] as string) : '')
 
       setParsed({
         type: (json.type as ReservationType) ?? 'other',
-        title: json.title ?? '',
-        provider: json.provider ?? '',
-        confirmation_number: json.confirmation_number ?? '',
-        date: json.date ?? '',
-        time: json.time ?? '',
-        address: json.address ?? '',
+        title: s('title'),
+        provider: s('provider'),
+        confirmation_number: s('confirmation_number'),
+        date: s('date'),
+        time: s('time'),
+        address: s('address'),
         details: (json.details ?? {}) as Json,
       })
       setStep('review')
@@ -485,16 +491,17 @@ function UploadPdfFlow({
 
       const data = await res.json()
       const text: string = data.content?.[0]?.text ?? ''
-      const json = JSON.parse(text)
+      const json = extractJson(text)
+      const s = (k: string) => (typeof json[k] === 'string' ? (json[k] as string) : '')
 
       setParsed({
         type: (json.type as ReservationType) ?? 'other',
-        title: json.title ?? '',
-        provider: json.provider ?? '',
-        confirmation_number: json.confirmation_number ?? '',
-        date: json.date ?? '',
-        time: json.time ?? '',
-        address: json.address ?? '',
+        title: s('title'),
+        provider: s('provider'),
+        confirmation_number: s('confirmation_number'),
+        date: s('date'),
+        time: s('time'),
+        address: s('address'),
         details: (json.details ?? {}) as Json,
       })
       setStep('review')
