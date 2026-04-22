@@ -1,10 +1,10 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
-import type { Budget, SpendingLog, Day, Lodging, Activity } from '@/types'
+import type { Budget, SpendingLog, Day, Lodging, Activity, Reservation } from '@/types'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -184,6 +184,9 @@ export default function OverviewPage() {
   const tripId = useAppStore((s) => s.tripId)
   const { data: trip, isLoading } = useTrip()
   const activeTripId = trip?.id ?? tripId
+  const queryClient = useQueryClient()
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle')
+  const [lastSynced, setLastSynced] = useState<Date | null>(null)
 
   const { data: budget } = useQuery({
     queryKey: ['budget', activeTripId],
@@ -215,6 +218,62 @@ export default function OverviewPage() {
     },
     enabled: !!activeTripId,
   })
+
+  const { data: reservations = [] } = useQuery({
+    queryKey: ['reservations', activeTripId],
+    queryFn: async (): Promise<Reservation[]> => {
+      const { data, error } = await supabase.from('reservations').select('*').eq('trip_id', activeTripId!)
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: !!activeTripId,
+  })
+
+  async function syncOffline() {
+    if (!activeTripId || !navigator.onLine) return
+    setSyncState('syncing')
+    try {
+      // Refetch all top-level trip queries
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['days', activeTripId] }),
+        queryClient.refetchQueries({ queryKey: ['reservations', activeTripId] }),
+        queryClient.refetchQueries({ queryKey: ['budget', activeTripId] }),
+        queryClient.refetchQueries({ queryKey: ['spending_log', activeTripId] }),
+        queryClient.refetchQueries({ queryKey: ['spending', activeTripId] }),
+      ])
+
+      // Fetch lodging + activities for every day
+      await Promise.all(
+        days.flatMap((d) => [
+          queryClient.prefetchQuery({
+            queryKey: ['lodging', d.id],
+            queryFn: async () => {
+              const { data, error } = await supabase.from('lodging').select('*').eq('day_id', d.id).maybeSingle()
+              if (error) throw error
+              return data
+            },
+          }),
+          queryClient.prefetchQuery({
+            queryKey: ['activities', d.id],
+            queryFn: async () => {
+              const { data, error } = await supabase.from('activities').select('*').eq('day_id', d.id).order('sort_order').order('time')
+              if (error) throw error
+              return data ?? []
+            },
+          }),
+        ])
+      )
+
+      // Warm Workbox cache for all PDF files
+      const pdfUrls = reservations.filter((r) => r.pdf_url).map((r) => r.pdf_url!)
+      await Promise.all(pdfUrls.map((url) => fetch(url, { cache: 'force-cache' }).catch(() => null)))
+
+      setLastSynced(new Date())
+      setSyncState('done')
+    } catch {
+      setSyncState('error')
+    }
+  }
 
   const today = todayYmd()
   const todayDay = useMemo(() => days.find((d) => d.date === today) ?? null, [days, today])
@@ -375,6 +434,32 @@ export default function OverviewPage() {
             <Link to="/wallet" className="btn-secondary flex-1 text-xs py-2.5 text-center">
               Wallet
             </Link>
+          </div>
+        )}
+
+        {/* Offline sync */}
+        {activeTripId && (
+          <div className="card">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="font-medium text-forest text-sm">Offline sync</p>
+                <p className="text-xs text-forest/50 mt-0.5">
+                  {syncState === 'done' && lastSynced
+                    ? `Synced at ${lastSynced.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} — ready for no-signal areas`
+                    : 'Tap before entering a National Park or area with no signal'}
+                </p>
+                {syncState === 'error' && (
+                  <p className="text-xs text-terracotta mt-0.5">Sync failed — check your connection and try again</p>
+                )}
+              </div>
+              <button
+                onClick={syncOffline}
+                disabled={syncState === 'syncing' || !navigator.onLine}
+                className="btn-primary text-xs px-3 py-1.5 shrink-0 ml-3"
+              >
+                {syncState === 'syncing' ? '⏳ Syncing…' : syncState === 'done' ? '✓ Sync again' : '⬇ Sync now'}
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -74,13 +74,13 @@ export default defineConfig({
             },
           },
           {
-            // Supabase — try network, fall back to cache
+            // Supabase API + Storage — try network, fall back to cache (7-day window for offline trips)
             urlPattern: ({ url }) => url.hostname.includes('supabase.co'),
             handler: 'NetworkFirst',
             options: {
               cacheName: 'supabase-cache',
               networkTimeoutSeconds: 10,
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 },
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 7 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
