@@ -1,10 +1,239 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
 import type { Budget, SpendingLog } from '@/types'
+
+// ── ReceiptScanFlow ────────────────────────────────────────────────────────────
+
+const RECEIPT_SYSTEM_PROMPT = `You are a receipt parser. Extract spending information from the receipt image and return ONLY valid JSON with no preamble or markdown.
+
+Return this exact structure:
+{
+  "label": "string (merchant name and brief description, e.g. \"McDonald's – Breakfast\" or \"Shell – Gas\")",
+  "amount": number,
+  "card": "food or car"
+}
+
+card rules:
+- "food" for restaurants, cafes, grocery stores, fast food, bars
+- "car" for gas stations, parking, tolls, car washes, auto services
+
+If a field cannot be determined, use null.`
+
+type ScanStep = 'idle' | 'scanning' | 'review' | 'error'
+
+interface ParsedReceipt {
+  label: string | null
+  amount: number | null
+  card: 'food' | 'car' | null
+}
+
+function ReceiptScanFlow({
+  defaultCard,
+  tripId,
+  onSaved,
+  onCancel,
+}: {
+  defaultCard: 'food' | 'car'
+  tripId: string
+  onSaved: () => void
+  onCancel: () => void
+}) {
+  const queryClient = useQueryClient()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [step, setStep] = useState<ScanStep>('idle')
+  const [, setParsed] = useState<ParsedReceipt>({ label: null, amount: null, card: defaultCard })
+  const [label, setLabel] = useState('')
+  const [amount, setAmount] = useState('')
+  const [card, setCard] = useState<'food' | 'car'>(defaultCard)
+  const [error, setError] = useState('')
+
+  async function handleFile(file: File) {
+    setStep('scanning')
+    setError('')
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = reader.result as string
+          resolve(result.split(',')[1])
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      const mediaType = (file.type || 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY as string,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 256,
+          system: RECEIPT_SYSTEM_PROMPT,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+              { type: 'text', text: 'Parse this receipt.' },
+            ],
+          }],
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: { message: res.statusText } }))
+        throw new Error(err?.error?.message ?? res.statusText)
+      }
+
+      const data = await res.json()
+      const text: string = data.content?.[0]?.text ?? ''
+      const json: ParsedReceipt = JSON.parse(text)
+
+      setParsed(json)
+      setLabel(json.label ?? '')
+      setAmount(json.amount != null ? String(json.amount) : '')
+      setCard(json.card ?? defaultCard)
+      setStep('review')
+    } catch (e) {
+      setError((e as Error).message ?? 'Unknown error')
+      setStep('error')
+    }
+  }
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from('spending_log').insert({
+        trip_id: tripId,
+        card,
+        amount: parseFloat(amount),
+        label: label.trim() || null,
+        entry_type: 'per_meal',
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] })
+      onSaved()
+    },
+  })
+
+  if (step === 'idle') {
+    return (
+      <div className="space-y-3">
+        <p className="font-display text-lg text-forest">Scan a Receipt</p>
+        <p className="text-sm text-forest/60">Take a photo or upload an image of your receipt.</p>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }}
+        />
+        <div className="flex gap-2">
+          <button onClick={() => fileRef.current?.click()} className="btn-primary flex-1">
+            📷 Take Photo
+          </button>
+          <button onClick={onCancel} className="btn-secondary px-4">Cancel</button>
+        </div>
+        <button
+          onClick={() => {
+            if (fileRef.current) {
+              fileRef.current.removeAttribute('capture')
+              fileRef.current.click()
+              fileRef.current.setAttribute('capture', 'environment')
+            }
+          }}
+          className="text-xs text-forest/40 underline w-full text-center"
+        >
+          or choose from library
+        </button>
+      </div>
+    )
+  }
+
+  if (step === 'scanning') {
+    return (
+      <div className="text-center py-16 space-y-3">
+        <p className="text-3xl animate-pulse">🧾</p>
+        <p className="text-sm text-forest/60">Reading your receipt…</p>
+      </div>
+    )
+  }
+
+  if (step === 'error') {
+    return (
+      <div className="space-y-3">
+        <p className="font-display text-lg text-forest">Scan failed</p>
+        <p className="text-sm text-terracotta">{error}</p>
+        <div className="flex gap-2">
+          <button onClick={() => setStep('idle')} className="btn-primary flex-1">Try again</button>
+          <button onClick={onCancel} className="btn-secondary px-4">Cancel</button>
+        </div>
+      </div>
+    )
+  }
+
+  // review step
+  return (
+    <div className="space-y-3">
+      <p className="font-display text-lg text-forest">Review & Save</p>
+      <div>
+        <label className="block text-sm text-forest mb-1">Description</label>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="e.g. McDonald's – Breakfast"
+          className="input"
+          autoFocus
+        />
+      </div>
+      <div>
+        <label className="block text-sm text-forest mb-1">Amount ($)</label>
+        <input
+          type="number"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder="0.00"
+          min="0"
+          step="0.01"
+          className="input font-mono"
+        />
+      </div>
+      <div>
+        <label className="block text-sm text-forest mb-1">Category</label>
+        <select value={card} onChange={(e) => setCard(e.target.value as 'food' | 'car')} className="input">
+          <option value="food">Food</option>
+          <option value="car">Car / Gas</option>
+        </select>
+      </div>
+      {saveMutation.isError && (
+        <p className="text-xs text-terracotta">{(saveMutation.error as Error).message}</p>
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending || !amount || parseFloat(amount) <= 0}
+          className="btn-primary flex-1"
+        >
+          {saveMutation.isPending ? 'Saving…' : 'Save'}
+        </button>
+        <button onClick={() => setStep('idle')} className="btn-secondary px-3">Retake</button>
+        <button onClick={onCancel} className="btn-secondary px-3">✕</button>
+      </div>
+    </div>
+  )
+}
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -27,7 +256,7 @@ function shortDate(iso: string) {
 
 function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]; tripId: string }) {
   const queryClient = useQueryClient()
-  const [mode, setMode] = useState<'meal' | 'total' | null>(null)
+  const [mode, setMode] = useState<'meal' | 'total' | 'scan' | null>(null)
   const [label, setLabel] = useState('')
   const [amount, setAmount] = useState('')
 
@@ -166,8 +395,20 @@ function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[
         </div>
       )}
 
+      {/* Scan receipt flow */}
+      {mode === 'scan' && (
+        <div className="bg-cream rounded-lg p-3 mb-3 border border-forest/10">
+          <ReceiptScanFlow
+            defaultCard="food"
+            tripId={tripId}
+            onSaved={() => setMode(null)}
+            onCancel={() => setMode(null)}
+          />
+        </div>
+      )}
+
       {/* Add entry form */}
-      {mode && (
+      {(mode === 'meal' || mode === 'total') && (
         <div className="bg-cream rounded-lg p-3 mb-3 space-y-2 border border-forest/10">
           <p className="text-xs font-medium text-forest/50 uppercase tracking-wide">
             {mode === 'meal' ? 'Log a meal' : "Log today's total"}
@@ -210,12 +451,15 @@ function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[
 
       {/* Action buttons */}
       {!mode && (
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={() => setMode('meal')} className="btn-secondary flex-1 text-xs py-2">
             + Meal
           </button>
           <button onClick={() => setMode('total')} className="btn-secondary flex-1 text-xs py-2">
             Log day total
+          </button>
+          <button onClick={() => setMode('scan')} className="btn-secondary flex-1 text-xs py-2">
+            📷 Scan receipt
           </button>
         </div>
       )}
@@ -284,7 +528,7 @@ function HotelCard({ budget }: { budget: Budget }) {
 
 function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]; tripId: string }) {
   const queryClient = useQueryClient()
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState<'manual' | 'scan' | false>(false)
   const [label, setLabel] = useState('')
   const [amount, setAmount] = useState('')
 
@@ -325,6 +569,8 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] }),
   })
 
+  function cancelAdd() { setAdding(false); setLabel(''); setAmount('') }
+
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-3">
@@ -363,8 +609,20 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
         </div>
       </div>
 
-      {/* Add form */}
-      {adding && (
+      {/* Scan receipt flow */}
+      {adding === 'scan' && (
+        <div className="bg-cream rounded-lg p-3 mb-3 border border-forest/10">
+          <ReceiptScanFlow
+            defaultCard="car"
+            tripId={tripId}
+            onSaved={() => setAdding(false)}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
+
+      {/* Manual add form */}
+      {adding === 'manual' && (
         <div className="bg-cream rounded-lg p-3 mb-3 space-y-2 border border-forest/10">
           <p className="text-xs font-medium text-forest/50 uppercase tracking-wide">Log gas / expense</p>
           <input
@@ -392,8 +650,7 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
             >
               {addMutation.isPending ? '…' : 'Save'}
             </button>
-            <button onClick={() => { setAdding(false); setLabel(''); setAmount('') }}
-              className="btn-secondary px-3">✕</button>
+            <button onClick={cancelAdd} className="btn-secondary px-3">✕</button>
           </div>
           {addMutation.isError && (
             <p className="text-xs text-terracotta">{(addMutation.error as Error).message}</p>
@@ -402,9 +659,14 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
       )}
 
       {!adding && (
-        <button onClick={() => setAdding(true)} className="btn-secondary w-full text-xs py-2 mb-1">
-          + Log gas / expense
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setAdding('manual')} className="btn-secondary flex-1 text-xs py-2">
+            + Log expense
+          </button>
+          <button onClick={() => setAdding('scan')} className="btn-secondary flex-1 text-xs py-2">
+            📷 Scan receipt
+          </button>
+        </div>
       )}
 
       {/* Entries list */}
