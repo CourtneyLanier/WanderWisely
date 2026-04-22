@@ -35,8 +35,15 @@ If a field cannot be determined, use null.`
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 function extractJson(raw: string): Record<string, unknown> {
-  const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-  return JSON.parse(stripped) as Record<string, unknown>
+  const stripped = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  try {
+    return JSON.parse(stripped) as Record<string, unknown>
+  } catch {
+    const start = raw.indexOf('{')
+    const end = raw.lastIndexOf('}')
+    if (start !== -1 && end !== -1) return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>
+    throw new Error('Could not extract JSON from Claude response')
+  }
 }
 
 function fmtDate(s: string | null) {
