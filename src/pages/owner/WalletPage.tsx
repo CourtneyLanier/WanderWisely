@@ -136,7 +136,14 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
           {res.address && (
             <div>
               <span className="text-xs text-forest/40 uppercase tracking-wide">Address</span>
-              <p className="text-sm text-forest mt-0.5">{res.address}</p>
+              <a
+                href={`https://maps.google.com/?q=${encodeURIComponent(res.address)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-deep-teal underline mt-0.5 block"
+              >
+                {res.address}
+              </a>
             </div>
           )}
           {res.cost != null && (

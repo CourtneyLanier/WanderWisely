@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
-import type { Day, Lodging, Activity, LodgingType, ActivityType, MealSlot } from '@/types'
+import type { Day, Lodging, Activity, LodgingType, ActivityType, MealSlot, Reservation } from '@/types'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -733,6 +733,74 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
   )
 }
 
+// ─── Wallet section ───────────────────────────────────────────────────────────
+
+const RES_ICONS: Record<string, string> = {
+  flight: '✈️', hotel: '🏨', car: '🚗', restaurant: '🍴', activity: '🎯', other: '📋',
+}
+
+function fmtResTime(s: string | null) {
+  if (!s) return null
+  const [h, m] = s.split(':').map(Number)
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
+}
+
+function WalletSection({ tripId, date }: { tripId: string; date: string | null }) {
+  const { data: reservations = [] } = useQuery({
+    queryKey: ['reservations-for-day', tripId, date],
+    queryFn: async (): Promise<Reservation[]> => {
+      if (!date) return []
+      const { data, error } = await supabase
+        .from('reservations').select('*')
+        .eq('trip_id', tripId).eq('date', date)
+        .order('time', { nullsFirst: false })
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: !!tripId && !!date,
+  })
+
+  if (!date || reservations.length === 0) return null
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="section-label mb-0">Wallet</p>
+        <Link to="/wallet" className="text-xs text-sage hover:text-forest transition-colors">
+          View all →
+        </Link>
+      </div>
+      <div className="card divide-y divide-forest/5">
+        {reservations.map((r) => (
+          <div key={r.id} className="py-2.5 flex items-start gap-3">
+            <span className="text-lg shrink-0 mt-0.5">{RES_ICONS[r.type ?? 'other']}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-forest truncate">{r.title || '—'}</p>
+              {r.provider && <p className="text-xs text-forest/50 truncate">{r.provider}</p>}
+              <div className="flex flex-wrap gap-x-3 mt-0.5">
+                {r.time && <span className="text-xs text-forest/50">{fmtResTime(r.time)}</span>}
+                {r.confirmation_number && (
+                  <span className="text-xs font-mono text-forest/40">#{r.confirmation_number}</span>
+                )}
+              </div>
+              {r.address && (
+                <a
+                  href={`https://maps.google.com/?q=${encodeURIComponent(r.address)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-deep-teal underline mt-0.5 block truncate"
+                >
+                  {r.address}
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DayDetailPage() {
@@ -801,6 +869,7 @@ export default function DayDetailPage() {
       <DayHeader day={day} />
       <LodgingSection dayId={day.id} />
       <ActivitiesSection dayId={day.id} />
+      {tripId && <WalletSection tripId={tripId} date={day.date} />}
     </div>
   )
 }
