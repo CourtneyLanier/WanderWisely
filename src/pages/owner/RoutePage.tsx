@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import type { Day, Reservation } from '@/types'
@@ -13,6 +13,13 @@ function fmtDate(s: string | null) {
   return new Date(s + 'T00:00:00').toLocaleDateString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric',
   })
+}
+
+function fmtTime(s: string | null) {
+  if (!s) return null
+  const [h, m] = s.split(':').map(Number)
+  const ampm = h >= 12 ? 'PM' : 'AM'
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`
 }
 
 function openMapsUrl(origin: string, destination: string, waypoints: string[]) {
@@ -49,9 +56,26 @@ function DayRoute({
   origin: string | null
   destination: string | null
 }) {
+  const queryClient = useQueryClient()
   const [waypoints, setWaypoints] = useState<string[]>(() => loadWaypoints(day.id))
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(waypoints.join('\n'))
+  const [editingTime, setEditingTime] = useState(false)
+  const [timeDraft, setTimeDraft] = useState(day.departure_time ?? '')
+
+  const saveTimeMutation = useMutation({
+    mutationFn: async (time: string) => {
+      const { error } = await supabase
+        .from('days')
+        .update({ departure_time: time || null })
+        .eq('id', day.id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['days'] })
+      setEditingTime(false)
+    },
+  })
 
   const hasRoute = !!(origin && destination)
   const embed = hasRoute ? embedUrl(origin, destination, waypoints) : null
@@ -88,6 +112,48 @@ function DayRoute({
           >
             Open in Maps ↗
           </a>
+        )}
+      </div>
+
+      {/* Start time */}
+      <div className="flex items-center gap-2">
+        {editingTime ? (
+          <>
+            <input
+              type="time"
+              value={timeDraft}
+              onChange={(e) => setTimeDraft(e.target.value)}
+              className="input text-sm py-1 w-36"
+              autoFocus
+            />
+            <button
+              onClick={() => saveTimeMutation.mutate(timeDraft)}
+              disabled={saveTimeMutation.isPending}
+              className="btn-primary text-xs px-3 py-1"
+            >
+              {saveTimeMutation.isPending ? '…' : 'Save'}
+            </button>
+            <button
+              onClick={() => { setTimeDraft(day.departure_time ?? ''); setEditingTime(false) }}
+              className="btn-secondary text-xs px-3 py-1"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => { setTimeDraft(day.departure_time ?? ''); setEditingTime(true) }}
+            className="flex items-center gap-1.5 text-xs text-forest/50 hover:text-forest transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+            {day.departure_time
+              ? <span>Depart <strong className="text-forest">{fmtTime(day.departure_time)}</strong></span>
+              : <span>+ Set start time</span>
+            }
+          </button>
         )}
       </div>
 
