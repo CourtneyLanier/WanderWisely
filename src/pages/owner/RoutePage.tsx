@@ -45,30 +45,143 @@ function persistWaypoints(dayId: string, wps: string[]) {
   localStorage.setItem(`ww-waypoints-${dayId}`, JSON.stringify(wps))
 }
 
+// ── LocationField ─────────────────────────────────────────────────────────────
+
+function LocationField({
+  label,
+  value,
+  hotelValue,
+  dotColor,
+  showLine,
+  onSave,
+}: {
+  label: string
+  value: string | null
+  hotelValue: string | null
+  dotColor: string
+  showLine: boolean
+  onSave: (v: string | null) => Promise<void>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const fromWallet = !value && !!hotelValue
+  const display = value || hotelValue
+
+  function startEdit() {
+    setDraft(value ?? hotelValue ?? '')
+    setEditing(true)
+  }
+
+  async function save() {
+    setSaving(true)
+    try {
+      await onSave(draft.trim() || null)
+      setEditing(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function cancel() {
+    setEditing(false)
+    setDraft('')
+  }
+
+  return (
+    <div className="flex items-stretch gap-3">
+      <div className="flex flex-col items-center shrink-0 w-4">
+        <div className={`w-3 h-3 rounded-full mt-0.5 shrink-0 ${dotColor}`} />
+        {showLine && <div className="w-px bg-forest/15 flex-1 my-1" />}
+      </div>
+      <div className="pb-2 flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <p className="text-xs text-forest/40 uppercase tracking-wide">{label}</p>
+          {fromWallet && (
+            <span className="text-[10px] text-deep-teal/60 bg-deep-teal/8 rounded px-1 py-px">wallet</span>
+          )}
+        </div>
+
+        {editing ? (
+          <div className="space-y-1.5">
+            <input
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="City, address, or landmark"
+              className="input text-sm py-1.5"
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') cancel() }}
+            />
+            <div className="flex gap-1.5">
+              <button
+                onClick={save}
+                disabled={saving}
+                className="btn-primary text-xs px-3 py-1 flex-1"
+              >
+                {saving ? '…' : 'Save'}
+              </button>
+              <button onClick={cancel} className="btn-secondary text-xs px-3 py-1">
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={startEdit}
+            className="w-full text-left group flex items-start gap-1"
+          >
+            {display ? (
+              <>
+                <p className={`text-sm leading-snug flex-1 ${fromWallet ? 'text-forest/60' : 'text-forest'}`}>
+                  {display}
+                </p>
+                <svg
+                  width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  className="shrink-0 mt-0.5 text-forest/20 group-hover:text-forest/50 transition-colors"
+                >
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </>
+            ) : (
+              <p className="text-sm text-sage hover:text-forest transition-colors">+ Set {label.toLowerCase()}</p>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── DayRoute ──────────────────────────────────────────────────────────────────
 
 function DayRoute({
   day,
-  origin,
-  destination,
+  hotelOrigin,
+  hotelDestination,
 }: {
   day: Day
-  origin: string | null
-  destination: string | null
+  hotelOrigin: string | null
+  hotelDestination: string | null
 }) {
   const queryClient = useQueryClient()
   const [waypoints, setWaypoints] = useState<string[]>(() => loadWaypoints(day.id))
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(waypoints.join('\n'))
+  const [editingWaypoints, setEditingWaypoints] = useState(false)
+  const [waypointDraft, setWaypointDraft] = useState(waypoints.join('\n'))
   const [editingTime, setEditingTime] = useState(false)
   const [timeDraft, setTimeDraft] = useState(day.departure_time ?? '')
+
+  // Effective values: manual entry wins over wallet fallback
+  const origin = day.start_location || hotelOrigin
+  const destination = day.end_location || hotelDestination
 
   const saveTimeMutation = useMutation({
     mutationFn: async (time: string) => {
       const { error } = await supabase
-        .from('days')
-        .update({ departure_time: time || null })
-        .eq('id', day.id)
+        .from('days').update({ departure_time: time || null }).eq('id', day.id)
       if (error) throw error
     },
     onSuccess: () => {
@@ -77,21 +190,25 @@ function DayRoute({
     },
   })
 
+  async function saveLocation(field: 'start_location' | 'end_location', value: string | null) {
+    const payload = field === 'start_location'
+      ? { start_location: value }
+      : { end_location: value }
+    const { error } = await supabase.from('days').update(payload).eq('id', day.id)
+    if (error) throw error
+    queryClient.invalidateQueries({ queryKey: ['days'] })
+  }
+
+  function saveWaypoints() {
+    const parsed = waypointDraft.split('\n').map((s) => s.trim()).filter(Boolean)
+    setWaypoints(parsed)
+    persistWaypoints(day.id, parsed)
+    setEditingWaypoints(false)
+  }
+
   const hasRoute = !!(origin && destination)
   const embed = hasRoute ? embedUrl(origin, destination, waypoints) : null
   const mapsLink = hasRoute ? openMapsUrl(origin, destination, waypoints) : null
-
-  function saveWaypoints() {
-    const parsed = draft.split('\n').map((s) => s.trim()).filter(Boolean)
-    setWaypoints(parsed)
-    persistWaypoints(day.id, parsed)
-    setEditing(false)
-  }
-
-  function startEdit() {
-    setDraft(waypoints.join('\n'))
-    setEditing(true)
-  }
 
   return (
     <div className="card space-y-3">
@@ -104,12 +221,8 @@ function DayRoute({
           {day.date && <span className="text-xs text-forest/50">{fmtDate(day.date)}</span>}
         </div>
         {mapsLink && (
-          <a
-            href={mapsLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-sage underline shrink-0"
-          >
+          <a href={mapsLink} target="_blank" rel="noopener noreferrer"
+            className="text-xs text-sage underline shrink-0">
             Open in Maps ↗
           </a>
         )}
@@ -157,24 +270,17 @@ function DayRoute({
         )}
       </div>
 
-      {/* Route visual */}
+      {/* Route visual — From / Stops / To */}
       <div className="space-y-0">
-        {/* Origin */}
-        <div className="flex items-stretch gap-3">
-          <div className="flex flex-col items-center shrink-0 w-4">
-            <div className="w-3 h-3 rounded-full bg-sage mt-0.5 shrink-0" />
-            <div className="w-px bg-forest/15 flex-1 my-1" />
-          </div>
-          <div className="pb-2 min-w-0">
-            <p className="text-xs text-forest/40 uppercase tracking-wide">From</p>
-            {origin
-              ? <p className="text-sm text-forest leading-snug">{origin}</p>
-              : <p className="text-sm text-forest/30 italic">No start address — add to day or wallet</p>
-            }
-          </div>
-        </div>
+        <LocationField
+          label="From"
+          value={day.start_location}
+          hotelValue={hotelOrigin}
+          dotColor="bg-sage"
+          showLine={true}
+          onSave={(v) => saveLocation('start_location', v)}
+        />
 
-        {/* Waypoints */}
         {waypoints.map((wp, i) => (
           <div key={i} className="flex items-stretch gap-3">
             <div className="flex flex-col items-center shrink-0 w-4">
@@ -188,28 +294,23 @@ function DayRoute({
           </div>
         ))}
 
-        {/* Destination */}
-        <div className="flex items-start gap-3">
-          <div className="flex flex-col items-center shrink-0 w-4">
-            <div className="w-3 h-3 rounded-full bg-terracotta/70 mt-0.5 shrink-0" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs text-forest/40 uppercase tracking-wide">To</p>
-            {destination
-              ? <p className="text-sm text-forest leading-snug">{destination}</p>
-              : <p className="text-sm text-forest/30 italic">No end address — add hotel to wallet</p>
-            }
-          </div>
-        </div>
+        <LocationField
+          label="To"
+          value={day.end_location}
+          hotelValue={hotelDestination}
+          dotColor="bg-terracotta/70"
+          showLine={false}
+          onSave={(v) => saveLocation('end_location', v)}
+        />
       </div>
 
       {/* Waypoints editor */}
-      {editing ? (
+      {editingWaypoints ? (
         <div className="space-y-2 pt-2 border-t border-forest/10">
           <p className="text-xs text-forest/50">One waypoint per line (name, city, or full address)</p>
           <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            value={waypointDraft}
+            onChange={(e) => setWaypointDraft(e.target.value)}
             placeholder={'Zion National Park, UT\nGrand Canyon South Rim, AZ'}
             rows={3}
             className="input text-sm"
@@ -217,38 +318,30 @@ function DayRoute({
           />
           <div className="flex gap-2">
             <button onClick={saveWaypoints} className="btn-primary text-sm flex-1">Save</button>
-            <button onClick={() => setEditing(false)} className="btn-secondary text-sm px-3">Cancel</button>
+            <button onClick={() => setEditingWaypoints(false)} className="btn-secondary text-sm px-3">Cancel</button>
           </div>
         </div>
       ) : (
         <button
-          onClick={startEdit}
+          onClick={() => { setWaypointDraft(waypoints.join('\n')); setEditingWaypoints(true) }}
           className="text-xs text-sage hover:text-forest transition-colors"
         >
           {waypoints.length > 0 ? 'Edit waypoints' : '+ Add waypoints'}
         </button>
       )}
 
-      {/* Map embed (only if API key present) */}
+      {/* Map embed */}
       {embed && (
-        <div className="rounded-lg overflow-hidden border border-forest/10 -mx-0" style={{ height: 220 }}>
+        <div className="rounded-lg overflow-hidden border border-forest/10" style={{ height: 220 }}>
           <iframe
             src={embed}
-            width="100%"
-            height="100%"
+            width="100%" height="100%"
             style={{ border: 0 }}
-            allowFullScreen
-            loading="lazy"
+            allowFullScreen loading="lazy"
             referrerPolicy="no-referrer-when-downgrade"
             title={`Map – Day ${day.day_number}`}
           />
         </div>
-      )}
-
-      {!hasRoute && !editing && (
-        <p className="text-xs text-forest/30 italic border-t border-forest/10 pt-2">
-          Upload hotel reservation PDFs to the Wallet to auto-fill start and end addresses.
-        </p>
       )}
     </div>
   )
@@ -284,7 +377,6 @@ export default function RoutePage() {
     enabled: !!tripId,
   })
 
-  // date → hotel address (check-in destination)
   const hotelByDate = useMemo(() => {
     const map: Record<string, string> = {}
     for (const r of hotelRes) {
@@ -292,18 +384,6 @@ export default function RoutePage() {
     }
     return map
   }, [hotelRes])
-
-  function getOrigin(day: Day, prev: Day | undefined): string | null {
-    // Previous night's hotel = this day's starting point
-    if (prev?.date && hotelByDate[prev.date]) return hotelByDate[prev.date]
-    return day.start_location
-  }
-
-  function getDestination(day: Day): string | null {
-    // Tonight's hotel = this day's ending point
-    if (day.date && hotelByDate[day.date]) return hotelByDate[day.date]
-    return day.end_location
-  }
 
   if (!tripId) {
     return (
@@ -318,11 +398,11 @@ export default function RoutePage() {
       <div className="mb-5">
         <h1 className="font-display text-2xl text-forest leading-tight">Route</h1>
         <p className="text-sm text-forest/50 mt-0.5">
-          Day-by-day driving plan — auto-filled from your hotel wallet entries.
+          Tap any field to edit. Hotel addresses from your Wallet fill in automatically.
         </p>
         {!MAPS_KEY && (
           <p className="text-xs text-forest/30 mt-1">
-            Add <span className="font-mono">VITE_GOOGLE_MAPS_API_KEY</span> to .env to enable embedded map previews.
+            Add <span className="font-mono">VITE_GOOGLE_MAPS_API_KEY</span> to .env for embedded map previews.
           </p>
         )}
       </div>
@@ -343,8 +423,8 @@ export default function RoutePage() {
             <DayRoute
               key={day.id}
               day={day}
-              origin={getOrigin(day, days[i - 1])}
-              destination={getDestination(day)}
+              hotelOrigin={days[i - 1]?.date ? (hotelByDate[days[i - 1].date!] ?? null) : null}
+              hotelDestination={day.date ? (hotelByDate[day.date] ?? null) : null}
             />
           ))}
         </div>
