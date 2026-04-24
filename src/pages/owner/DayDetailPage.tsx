@@ -158,7 +158,7 @@ const EMPTY_LODGING = {
   nightly_rate: '', total_cost: '', notes: '',
 }
 
-function LodgingSection({ dayId }: { dayId: string }) {
+function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: string | null; date?: string | null }) {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [f, setF] = useState(EMPTY_LODGING)
@@ -171,6 +171,20 @@ function LodgingSection({ dayId }: { dayId: string }) {
       if (error) throw error
       return data
     },
+  })
+
+  const { data: hotelReservations = [] } = useQuery({
+    queryKey: ['hotel-reservations-for-day', tripId, date],
+    queryFn: async (): Promise<Reservation[]> => {
+      if (!tripId || !date) return []
+      const { data, error } = await supabase
+        .from('reservations').select('*')
+        .eq('trip_id', tripId).eq('date', date).eq('type', 'hotel')
+        .order('time', { nullsFirst: false })
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: !!tripId && !!date,
   })
 
   useEffect(() => {
@@ -276,9 +290,54 @@ function LodgingSection({ dayId }: { dayId: string }) {
         </div>
       )}
 
-      {!editing && !lodging && (
+      {!editing && !lodging && hotelReservations.length === 0 && (
         <div className="card text-center py-6">
           <p className="text-forest/40 text-sm">No lodging added yet.</p>
+        </div>
+      )}
+
+      {!editing && hotelReservations.length > 0 && (
+        <div className="space-y-2 mt-2">
+          {hotelReservations.map((r) => (
+            <div key={r.id} className="card border-l-2 border-l-deep-teal/30">
+              <div className="flex items-start gap-2">
+                <span className="text-base shrink-0">🏨</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-forest truncate">
+                    {r.title || r.provider || 'Hotel Reservation'}
+                  </p>
+                  {r.provider && r.title && (
+                    <p className="text-xs text-forest/50 truncate">{r.provider}</p>
+                  )}
+                  {r.confirmation_number && (
+                    <p className="text-xs font-mono text-forest/40 mt-0.5">#{r.confirmation_number}</p>
+                  )}
+                  {r.address && (
+                    <a
+                      href={`https://maps.google.com/?q=${encodeURIComponent(r.address)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-deep-teal underline mt-0.5 block truncate"
+                    >
+                      {r.address}
+                    </a>
+                  )}
+                  {r.cost != null && (
+                    <p className="text-xs font-mono text-gold mt-0.5">
+                      ${r.cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </p>
+                  )}
+                  {r.pdf_url && (
+                    <a href={r.pdf_url} target="_blank" rel="noopener noreferrer"
+                      className="text-xs text-deep-teal underline mt-1 block">
+                      📄 View PDF
+                    </a>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-forest/30 mt-1.5 ml-6">From Wallet</p>
+            </div>
+          ))}
         </div>
       )}
 
@@ -752,7 +811,7 @@ function WalletSection({ tripId, date }: { tripId: string; date: string | null }
       if (!date) return []
       const { data, error } = await supabase
         .from('reservations').select('*')
-        .eq('trip_id', tripId).eq('date', date)
+        .eq('trip_id', tripId).eq('date', date).neq('type', 'hotel')
         .order('time', { nullsFirst: false })
       if (error) throw error
       return data ?? []
@@ -775,7 +834,7 @@ function WalletSection({ tripId, date }: { tripId: string; date: string | null }
           <div key={r.id} className="py-2.5 flex items-start gap-3">
             <span className="text-lg shrink-0 mt-0.5">{RES_ICONS[r.type ?? 'other']}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-forest truncate">{r.title || '—'}</p>
+              <p className="text-sm font-medium text-forest truncate">{r.title || r.provider || r.type || '—'}</p>
               {r.provider && <p className="text-xs text-forest/50 truncate">{r.provider}</p>}
               <div className="flex flex-wrap gap-x-3 mt-0.5">
                 {r.time && <span className="text-xs text-forest/50">{fmtResTime(r.time)}</span>}
@@ -867,7 +926,7 @@ export default function DayDetailPage() {
       </div>
 
       <DayHeader day={day} />
-      <LodgingSection dayId={day.id} />
+      <LodgingSection dayId={day.id} tripId={tripId} date={day.date} />
       <ActivitiesSection dayId={day.id} />
       {tripId && <WalletSection tripId={tripId} date={day.date} />}
     </div>

@@ -4,7 +4,7 @@ import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
-import type { Budget, SpendingLog } from '@/types'
+import type { Budget, SpendingLog, Reservation } from '@/types'
 
 // ── ReceiptScanFlow ────────────────────────────────────────────────────────────
 
@@ -490,11 +490,71 @@ function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[
 
 // ── HotelCard ──────────────────────────────────────────────────────────────────
 
-function HotelCard({ budget }: { budget: Budget }) {
-  const bufferOk = budget.hotel_buffer >= 500
+function fmtResDate(s: string | null) {
+  if (!s) return null
+  return new Date(s + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function HotelCard({
+  logs,
+  tripId,
+  hotelReservations,
+}: {
+  logs: SpendingLog[]
+  tripId: string
+  hotelReservations: Reservation[]
+}) {
+  const queryClient = useQueryClient()
+  const [adding, setAdding] = useState(false)
+  const [label, setLabel] = useState('')
+  const [amount, setAmount] = useState('')
+
+  const hotelLogs = useMemo(
+    () => logs.filter((l) => l.card === 'hotel').sort((a, b) => b.logged_at.localeCompare(a.logged_at)),
+    [logs]
+  )
+
+  const totalBooked = useMemo(
+    () => hotelReservations.reduce((s, r) => s + (r.cost ?? 0), 0),
+    [hotelReservations]
+  )
+  const totalPaid = useMemo(() => hotelLogs.reduce((s, l) => s + l.amount, 0), [hotelLogs])
+  const outstanding = totalBooked - totalPaid
+  const pct = totalBooked > 0 ? Math.min(100, (totalPaid / totalBooked) * 100) : 0
+  const overPaid = totalPaid > totalBooked && totalBooked > 0
+
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from('spending_log').insert({
+        trip_id: tripId,
+        card: 'hotel',
+        amount: parseFloat(amount),
+        label: label.trim() || null,
+        entry_type: 'per_meal',
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] })
+      setAdding(false)
+      setLabel('')
+      setAmount('')
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('spending_log').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] }),
+  })
+
+  function cancelAdd() { setAdding(false); setLabel(''); setAmount('') }
 
   return (
     <div className="card">
+      {/* Header */}
       <div className="flex items-center gap-2 mb-3">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gold">
@@ -504,23 +564,120 @@ function HotelCard({ budget }: { budget: Budget }) {
         <p className="font-display text-lg text-forest">Hotel</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <div className="card-inset p-3">
-          <p className="text-xs text-forest/50 mb-1">Total booked</p>
-          <p className="font-mono text-base font-semibold text-forest">{dollar(budget.hotel_total)}</p>
-        </div>
-        <div className={`rounded-lg p-3 ${bufferOk ? 'bg-cream/70 border border-forest/[0.08]' : 'bg-terracotta/10 border border-terracotta/20'}`}>
-          <p className="text-xs text-forest/50 mb-1">Deposit buffer</p>
-          <p className={`font-mono text-base font-semibold ${bufferOk ? 'text-forest' : 'text-terracotta'}`}>
-            {dollar(budget.hotel_buffer)}
-          </p>
-          {!bufferOk && <p className="text-xs text-terracotta mt-0.5">Below $500 — check deposits</p>}
-        </div>
-      </div>
+      {totalBooked > 0 && (
+        <>
+          {/* Progress bar */}
+          <div className="h-2 bg-forest/10 rounded-full mb-4 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${overPaid ? 'bg-sage' : 'bg-gold'}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
 
-      <p className="text-xs text-forest/40">
-        Hotel totals are tracked in Settings. No per-night logging needed.
-      </p>
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+            <div className="card-inset py-2.5 px-1">
+              <p className="text-xs text-forest/50 mb-0.5">Booked</p>
+              <p className="font-mono text-sm font-medium text-forest">{dollar(Math.round(totalBooked))}</p>
+            </div>
+            <div className="card-inset py-2.5 px-1">
+              <p className="text-xs text-forest/50 mb-0.5">Paid</p>
+              <p className="font-mono text-sm font-medium text-sage">{dollar(Math.round(totalPaid))}</p>
+            </div>
+            <div className="card-inset py-2.5 px-1">
+              <p className="text-xs text-forest/50 mb-0.5">Outstanding</p>
+              <p className={`font-mono text-sm font-medium ${outstanding > 0 ? 'text-forest' : 'text-sage'}`}>
+                {dollar(Math.round(Math.max(0, outstanding)))}
+              </p>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Hotel reservations list */}
+      {hotelReservations.length > 0 && (
+        <div className="mb-3 space-y-1.5">
+          <p className="section-label mb-1">From Wallet</p>
+          {hotelReservations.map((r) => (
+            <div key={r.id} className="flex items-center justify-between text-sm">
+              <div className="flex-1 min-w-0 mr-2">
+                <span className="text-forest truncate block">{r.title || r.provider || 'Hotel'}</span>
+                {r.date && <span className="text-xs text-forest/40">{fmtResDate(r.date)}</span>}
+              </div>
+              {r.cost != null && (
+                <span className="font-mono text-forest shrink-0">{dollar(r.cost)}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {hotelReservations.length === 0 && totalBooked === 0 && (
+        <p className="text-xs text-forest/40 mb-3">
+          Upload hotel reservation PDFs to Wallet to track costs here automatically.
+        </p>
+      )}
+
+      {/* Log payment form */}
+      {adding && (
+        <div className="bg-cream rounded-lg p-3 mb-3 space-y-2 border border-forest/10">
+          <p className="text-xs font-medium text-forest/50 uppercase tracking-wide">Log hotel payment</p>
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. Hampton Inn – Night 1 deposit"
+            className="input"
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="$0"
+              min="0"
+              step="0.01"
+              className="input font-mono flex-1"
+            />
+            <button
+              onClick={() => addMutation.mutate()}
+              disabled={addMutation.isPending || !amount || parseFloat(amount) <= 0}
+              className="btn-primary px-4"
+            >
+              {addMutation.isPending ? '…' : 'Save'}
+            </button>
+            <button onClick={cancelAdd} className="btn-secondary px-3">✕</button>
+          </div>
+          {addMutation.isError && (
+            <p className="text-xs text-terracotta">{(addMutation.error as Error).message}</p>
+          )}
+        </div>
+      )}
+
+      {!adding && (
+        <button onClick={() => setAdding(true)} className="btn-secondary w-full text-xs py-2">
+          + Log payment
+        </button>
+      )}
+
+      {/* Payment history */}
+      {hotelLogs.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-forest/10 space-y-1.5">
+          <p className="section-label mb-1.5">Payments logged</p>
+          {hotelLogs.map((l) => (
+            <div key={l.id} className="flex items-center justify-between text-sm">
+              <span className="text-forest truncate flex-1 mr-2">{l.label || 'Hotel payment'}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-mono text-forest">{dollar(l.amount)}</span>
+                <span className="text-xs text-forest/40">{shortDate(l.logged_at)}</span>
+                <button onClick={() => deleteMutation.mutate(l.id)}
+                  className="text-terracotta/50 hover:text-terracotta text-xs leading-none">✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -721,6 +878,19 @@ export default function BudgetPage() {
     enabled: !!activeTripId,
   })
 
+  const { data: hotelReservations = [] } = useQuery({
+    queryKey: ['hotel-reservations-budget', activeTripId],
+    queryFn: async (): Promise<Reservation[]> => {
+      const { data, error } = await supabase
+        .from('reservations').select('*')
+        .eq('trip_id', activeTripId!).eq('type', 'hotel')
+        .order('date', { nullsFirst: false })
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: !!activeTripId,
+  })
+
   const currentTripDay = useMemo(() => {
     if (!trip?.start_date || !trip?.num_days) return null
     const start = new Date(trip.start_date + 'T00:00:00')
@@ -764,7 +934,7 @@ export default function BudgetPage() {
 
       <div className="space-y-4">
         <FoodCard budget={budget} logs={logs} tripId={activeTripId} />
-        <HotelCard budget={budget} />
+        <HotelCard logs={logs} tripId={activeTripId} hotelReservations={hotelReservations} />
         <CarCard budget={budget} logs={logs} tripId={activeTripId} />
       </div>
     </div>

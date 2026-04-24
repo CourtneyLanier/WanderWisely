@@ -42,6 +42,18 @@ function IconBudget({ active }: { active: boolean }) {
   )
 }
 
+function IconRoute({ active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={active ? 2 : 1.5} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5" cy="19" r="2" />
+      <circle cx="19" cy="5" r="2" />
+      <path d="M5 17V11a7 7 0 0 1 7-7h2" />
+      <path d="M19 7v6a7 7 0 0 1-7 7H8" />
+    </svg>
+  )
+}
+
 function IconSettings({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -56,6 +68,7 @@ const tabs = [
   { to: '/overview', label: 'Overview', Icon: IconOverview },
   { to: '/days',     label: 'Days',     Icon: IconDays     },
   { to: '/wallet',   label: 'Wallet',   Icon: IconWallet   },
+  { to: '/route',    label: 'Route',    Icon: IconRoute    },
   { to: '/budget',   label: 'Budget',   Icon: IconBudget   },
   { to: '/settings', label: 'Settings', Icon: IconSettings },
 ]

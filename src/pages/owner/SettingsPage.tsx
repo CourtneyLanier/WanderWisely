@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
@@ -6,7 +7,7 @@ import { useTrip } from '@/hooks/useTrip'
 import type { Budget } from '@/types'
 
 export default function SettingsPage() {
-  const { user, tripId, setTripId, signOut } = useAppStore()
+  const { tripId, signOut } = useAppStore()
   const queryClient = useQueryClient()
   const { data: trip, isLoading: tripLoading } = useTrip()
 
@@ -33,7 +34,6 @@ export default function SettingsPage() {
   // Budget fields
   const [foodTotal, setFoodTotal] = useState('')
   const [foodDays, setFoodDays] = useState('')
-  const [hotelTotal, setHotelTotal] = useState('')
   const [hotelBuffer, setHotelBuffer] = useState('500')
   const [carBudget, setCarBudget] = useState('')
 
@@ -52,7 +52,6 @@ export default function SettingsPage() {
     if (!budget) return
     setFoodTotal(String(budget.food_total ?? ''))
     setFoodDays(String(budget.food_days ?? ''))
-    setHotelTotal(String(budget.hotel_total ?? ''))
     setHotelBuffer(String(budget.hotel_buffer ?? 500))
     setCarBudget(String(budget.car_total_budget ?? ''))
   }, [budget])
@@ -70,53 +69,32 @@ export default function SettingsPage() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!user) throw new Error('Not signed in')
-      let currentTripId = trip?.id ?? tripId
+      if (!trip || !tripId) throw new Error('No trip selected')
 
-      if (trip) {
-        const { error } = await supabase
-          .from('trips')
-          .update({
-            name,
-            start_date: startDate || null,
-            end_date: endDate || null,
-            num_days: numDays,
-            share_enabled: shareEnabled,
-          })
-          .eq('id', trip.id)
-        if (error) throw error
-      } else {
-        const { data, error } = await supabase
-          .from('trips')
-          .insert({
-            owner_uid: user.id,
-            name: name || 'My Trip',
-            start_date: startDate || null,
-            end_date: endDate || null,
-            num_days: numDays,
-            share_enabled: shareEnabled,
-          })
-          .select()
-          .single()
-        if (error) throw error
-        setTripId(data.id)
-        currentTripId = data.id
-      }
+      const { error: tripError } = await supabase
+        .from('trips')
+        .update({
+          name,
+          start_date: startDate || null,
+          end_date: endDate || null,
+          num_days: numDays,
+          share_enabled: shareEnabled,
+        })
+        .eq('id', trip.id)
+      if (tripError) throw tripError
 
-      if (currentTripId) {
-        const { error } = await supabase.from('budget').upsert(
-          {
-            trip_id: currentTripId,
-            food_total: parseFloat(foodTotal) || 0,
-            food_days: parseInt(foodDays) || 0,
-            hotel_total: parseFloat(hotelTotal) || 0,
-            hotel_buffer: parseFloat(hotelBuffer) || 500,
-            car_total_budget: parseFloat(carBudget) || 0,
-          },
-          { onConflict: 'trip_id' }
-        )
-        if (error) throw error
-      }
+      const { error: budgetError } = await supabase.from('budget').upsert(
+        {
+          trip_id: tripId,
+          food_total: parseFloat(foodTotal) || 0,
+          food_days: parseInt(foodDays) || 0,
+          hotel_total: 0,
+          hotel_buffer: parseFloat(hotelBuffer) || 500,
+          car_total_budget: parseFloat(carBudget) || 0,
+        },
+        { onConflict: 'trip_id' }
+      )
+      if (budgetError) throw budgetError
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trip'] })
@@ -144,16 +122,28 @@ export default function SettingsPage() {
     )
   }
 
+  if (!trip) {
+    return (
+      <div className="p-4 pt-6 pb-10">
+        <h1 className="font-display text-2xl text-forest mb-4">Settings</h1>
+        <div className="card text-center py-12 space-y-3">
+          <p className="text-forest/50 text-sm">No trip selected.</p>
+          <Link to="/trips" className="btn-primary inline-block">Go to My Trips</Link>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="p-4 pt-6 pb-10">
-      <h1 className="font-display text-2xl text-forest mb-1">Settings</h1>
-      {!trip && (
-        <p className="text-sm text-gold font-medium mb-4">
-          Set up your trip to get started.
-        </p>
-      )}
+      <div className="flex items-baseline justify-between mb-4">
+        <h1 className="font-display text-2xl text-forest">Settings</h1>
+        <Link to="/trips" className="text-xs text-sage hover:text-forest transition-colors">
+          Switch trip ↗
+        </Link>
+      </div>
 
-      <div className="space-y-4 mt-4">
+      <div className="space-y-4">
 
         {/* ── Trip Setup ── */}
         <div className="card">
@@ -227,17 +217,6 @@ export default function SettingsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm text-forest mb-1">Hotel total ($)</label>
-                <input
-                  type="number"
-                  value={hotelTotal}
-                  onChange={(e) => setHotelTotal(e.target.value)}
-                  placeholder="3200"
-                  min="0"
-                  className="input font-mono"
-                />
-              </div>
-              <div>
                 <label className="block text-sm text-forest mb-1">Hotel buffer ($)</label>
                 <input
                   type="number"
@@ -248,17 +227,17 @@ export default function SettingsPage() {
                   className="input font-mono"
                 />
               </div>
-            </div>
-            <div>
-              <label className="block text-sm text-forest mb-1">Car budget ceiling ($)</label>
-              <input
-                type="number"
-                value={carBudget}
-                onChange={(e) => setCarBudget(e.target.value)}
-                placeholder="800"
-                min="0"
-                className="input font-mono"
-              />
+              <div>
+                <label className="block text-sm text-forest mb-1">Car budget ($)</label>
+                <input
+                  type="number"
+                  value={carBudget}
+                  onChange={(e) => setCarBudget(e.target.value)}
+                  placeholder="800"
+                  min="0"
+                  className="input font-mono"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -283,16 +262,12 @@ export default function SettingsPage() {
               />
             </button>
           </div>
-          {trip ? (
-            <div className="space-y-2">
-              <p className="text-xs text-forest/50 break-all font-mono">{guestLink}</p>
-              <button onClick={copyLink} className="btn-secondary w-full text-sm">
-                {copied ? '✓ Copied!' : 'Copy guest link'}
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-forest/40">Save your trip first to get a share link.</p>
-          )}
+          <div className="space-y-2">
+            <p className="text-xs text-forest/50 break-all font-mono">{guestLink}</p>
+            <button onClick={copyLink} className="btn-secondary w-full text-sm">
+              {copied ? '✓ Copied!' : 'Copy guest link'}
+            </button>
+          </div>
         </div>
 
         {/* ── Save / Error ── */}
@@ -307,13 +282,7 @@ export default function SettingsPage() {
           disabled={saveMutation.isPending || !name.trim()}
           className="btn-primary w-full"
         >
-          {saveMutation.isPending
-            ? 'Saving…'
-            : saved
-            ? '✓ Saved'
-            : trip
-            ? 'Save Changes'
-            : 'Create Trip'}
+          {saveMutation.isPending ? 'Saving…' : saved ? '✓ Saved' : 'Save Changes'}
         </button>
 
         <button onClick={signOut} className="btn-secondary w-full">

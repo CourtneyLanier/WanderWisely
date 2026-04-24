@@ -105,7 +105,9 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
       <div className="flex items-start gap-3">
         <span className="text-2xl mt-0.5 shrink-0">{TYPE_ICONS[res.type ?? 'other']}</span>
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-forest leading-snug truncate">{res.title || '—'}</p>
+          <p className="font-medium text-forest leading-snug truncate">
+            {res.title || res.provider || TYPE_LABELS[res.type ?? 'other'] || '—'}
+          </p>
           {res.provider && <p className="text-xs text-forest/50 mt-0.5 truncate">{res.provider}</p>}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1">
             {res.date && <span className="text-xs text-forest/60">{fmtDate(res.date)}</span>}
