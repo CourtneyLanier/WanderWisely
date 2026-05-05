@@ -15,23 +15,6 @@ const TYPE_LABELS: Record<ReservationType, string> = {
 }
 const ALL_TYPES: ReservationType[] = ['flight', 'hotel', 'car', 'restaurant', 'activity', 'other']
 
-const PARSE_SYSTEM_PROMPT = `You are a travel reservation parser. Extract structured data from the pasted email confirmation text and return ONLY valid JSON with no preamble or markdown.
-
-Return this exact structure:
-{
-  "type": "flight|hotel|car|restaurant|activity|other",
-  "title": "string",
-  "provider": "string",
-  "confirmation_number": "string",
-  "date": "YYYY-MM-DD",
-  "time": "HH:MM",
-  "address": "string",
-  "details": {}
-}
-
-Put any extra useful fields (seat numbers, terminal, baggage, check-in instructions, etc.) inside "details" as key-value pairs.
-If a field cannot be determined, use null.`
-
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 function extractJson(raw: string): Record<string, unknown> {
@@ -311,30 +294,12 @@ function ParseEmailFlow({
     setStep('parsing')
     setParseError('')
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY as string,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1024,
-          system: PARSE_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: emailText }],
-        }),
+      const { data, error } = await supabase.functions.invoke('parse-with-claude', {
+        body: { mode: 'email', text: emailText },
       })
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: { message: res.statusText } }))
-        throw new Error(err?.error?.message ?? res.statusText)
-      }
-
-      const data = await res.json()
-      const text: string = data.content?.[0]?.text ?? ''
-      const json = extractJson(text)
+      if (error) throw error
+      if (!data?.ok) throw new Error(data?.error ?? 'Unknown error')
+      const json = extractJson(data.text as string)
       const s = (k: string) => (typeof json[k] === 'string' ? (json[k] as string) : '')
 
       setParsed({
@@ -451,6 +416,12 @@ function UploadPdfFlow({
     setStep('uploading')
     setError('')
     try {
+      // Reject oversized PDFs — large multi-page docs blow up token cost.
+      const MAX_PDF_BYTES = 5 * 1024 * 1024
+      if (file.size > MAX_PDF_BYTES) {
+        throw new Error(`PDF is ${(file.size / 1024 / 1024).toFixed(1)} MB. Please upload a file under 5 MB.`)
+      }
+
       // Read as base64 for Claude
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
@@ -473,41 +444,14 @@ function UploadPdfFlow({
         .getPublicUrl(path)
       setPdfUrl(publicUrl)
 
-      // Parse with Claude
+      // Parse with Claude via the edge function
       setStep('parsing')
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY as string,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1024,
-          system: PARSE_SYSTEM_PROMPT,
-          messages: [{
-            role: 'user',
-            content: [
-              {
-                type: 'document',
-                source: { type: 'base64', media_type: 'application/pdf', data: base64 },
-              },
-              { type: 'text', text: 'Parse this confirmation document.' },
-            ],
-          }],
-        }),
+      const { data, error: fnError } = await supabase.functions.invoke('parse-with-claude', {
+        body: { mode: 'pdf', pdfBase64: base64 },
       })
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: { message: res.statusText } }))
-        throw new Error(err?.error?.message ?? res.statusText)
-      }
-
-      const data = await res.json()
-      const text: string = data.content?.[0]?.text ?? ''
-      const json = extractJson(text)
+      if (fnError) throw fnError
+      if (!data?.ok) throw new Error(data?.error ?? 'Unknown error')
+      const json = extractJson(data.text as string)
       const s = (k: string) => (typeof json[k] === 'string' ? (json[k] as string) : '')
 
       setParsed({
