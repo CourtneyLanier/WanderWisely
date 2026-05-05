@@ -8,21 +8,6 @@ import type { Budget, SpendingLog, Reservation } from '@/types'
 
 // ── ReceiptScanFlow ────────────────────────────────────────────────────────────
 
-const RECEIPT_SYSTEM_PROMPT = `You are a receipt parser. Extract spending information from the receipt image and return ONLY valid JSON with no preamble or markdown.
-
-Return this exact structure:
-{
-  "label": "string (merchant name and brief description, e.g. \"McDonald's – Breakfast\" or \"Shell – Gas\")",
-  "amount": number,
-  "card": "food or car"
-}
-
-card rules:
-- "food" for restaurants, cafes, grocery stores, fast food, bars
-- "car" for gas stations, parking, tolls, car washes, auto services
-
-If a field cannot be determined, use null.`
-
 type ScanStep = 'idle' | 'scanning' | 'review' | 'error'
 
 interface ParsedReceipt {
@@ -67,35 +52,12 @@ function ReceiptScanFlow({
 
       const mediaType = (file.type || 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
 
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY as string,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 256,
-          system: RECEIPT_SYSTEM_PROMPT,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-              { type: 'text', text: 'Parse this receipt.' },
-            ],
-          }],
-        }),
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('parse-with-claude', {
+        body: { mode: 'receipt', imageBase64: base64, mediaType },
       })
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: { message: res.statusText } }))
-        throw new Error(err?.error?.message ?? res.statusText)
-      }
-
-      const data = await res.json()
-      const text: string = data.content?.[0]?.text ?? ''
+      if (fnError) throw fnError
+      if (!fnData?.ok) throw new Error(fnData?.error ?? 'Unknown error')
+      const text = fnData.text as string
       const raw = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
       const json: ParsedReceipt = JSON.parse(raw)
 
