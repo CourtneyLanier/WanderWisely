@@ -5,43 +5,37 @@ import { useAppStore } from '@/store/useAppStore'
 
 // ── State data ─────────────────────────────────────────────────────────────────
 
-const STATE_NAMES: Record<string, string> = {
-  AL: 'Alabama',      AK: 'Alaska',         AZ: 'Arizona',       AR: 'Arkansas',
-  CA: 'California',   CO: 'Colorado',       CT: 'Connecticut',   DE: 'Delaware',
-  FL: 'Florida',      GA: 'Georgia',        HI: 'Hawaii',        ID: 'Idaho',
-  IL: 'Illinois',     IN: 'Indiana',        IA: 'Iowa',          KS: 'Kansas',
-  KY: 'Kentucky',     LA: 'Louisiana',      ME: 'Maine',         MD: 'Maryland',
-  MA: 'Massachusetts',MI: 'Michigan',       MN: 'Minnesota',     MS: 'Mississippi',
-  MO: 'Missouri',     MT: 'Montana',        NE: 'Nebraska',      NV: 'Nevada',
-  NH: 'New Hampshire',NJ: 'New Jersey',     NM: 'New Mexico',    NY: 'New York',
-  NC: 'North Carolina',ND: 'North Dakota',  OH: 'Ohio',          OK: 'Oklahoma',
-  OR: 'Oregon',       PA: 'Pennsylvania',   RI: 'Rhode Island',  SC: 'South Carolina',
-  SD: 'South Dakota', TN: 'Tennessee',      TX: 'Texas',         UT: 'Utah',
-  VT: 'Vermont',      VA: 'Virginia',       WA: 'Washington',    WV: 'West Virginia',
-  WI: 'Wisconsin',    WY: 'Wyoming',
-}
-
-// Tile grid — [row][col], 11 cols x 9 rows, AlbersUSA-inspired layout
-const GRID: (string | null)[][] = [
-  [null, null, null, null, null, null, null, null, null, null, 'ME'],
-  [null, null, null, null, null, null, null, null, null, 'VT', 'NH'],
-  ['WA', null, 'MT', 'ND', 'MN', null, null, 'MI', null, 'MA', null],
-  ['OR', 'ID', 'WY', 'SD', 'WI', null, null, null, 'NY', 'RI', null],
-  ['CA', 'NV', 'CO', 'NE', 'IA', 'IL', 'IN', 'OH', 'PA', 'CT', 'NJ'],
-  [null, 'UT', null, 'KS', 'MO', null, 'KY', 'WV', 'VA', 'MD', 'DE'],
-  ['AZ', null, 'NM', 'OK', 'AR', 'TN', null, 'NC', null, null, null],
-  [null, null, 'TX', null, 'LA', 'MS', 'AL', 'GA', 'SC', null, null],
-  ['HI', 'AK', null, null, null, null, null, 'FL', null, null, null],
+const ALL_STATES: { abbr: string; name: string }[] = [
+  { abbr: 'AL', name: 'Alabama' },       { abbr: 'AK', name: 'Alaska' },
+  { abbr: 'AZ', name: 'Arizona' },       { abbr: 'AR', name: 'Arkansas' },
+  { abbr: 'CA', name: 'California' },    { abbr: 'CO', name: 'Colorado' },
+  { abbr: 'CT', name: 'Connecticut' },   { abbr: 'DE', name: 'Delaware' },
+  { abbr: 'FL', name: 'Florida' },       { abbr: 'GA', name: 'Georgia' },
+  { abbr: 'HI', name: 'Hawaii' },        { abbr: 'ID', name: 'Idaho' },
+  { abbr: 'IL', name: 'Illinois' },      { abbr: 'IN', name: 'Indiana' },
+  { abbr: 'IA', name: 'Iowa' },          { abbr: 'KS', name: 'Kansas' },
+  { abbr: 'KY', name: 'Kentucky' },      { abbr: 'LA', name: 'Louisiana' },
+  { abbr: 'ME', name: 'Maine' },         { abbr: 'MD', name: 'Maryland' },
+  { abbr: 'MA', name: 'Massachusetts' }, { abbr: 'MI', name: 'Michigan' },
+  { abbr: 'MN', name: 'Minnesota' },     { abbr: 'MS', name: 'Mississippi' },
+  { abbr: 'MO', name: 'Missouri' },      { abbr: 'MT', name: 'Montana' },
+  { abbr: 'NE', name: 'Nebraska' },      { abbr: 'NV', name: 'Nevada' },
+  { abbr: 'NH', name: 'New Hampshire' }, { abbr: 'NJ', name: 'New Jersey' },
+  { abbr: 'NM', name: 'New Mexico' },    { abbr: 'NY', name: 'New York' },
+  { abbr: 'NC', name: 'North Carolina' },{ abbr: 'ND', name: 'North Dakota' },
+  { abbr: 'OH', name: 'Ohio' },          { abbr: 'OK', name: 'Oklahoma' },
+  { abbr: 'OR', name: 'Oregon' },        { abbr: 'PA', name: 'Pennsylvania' },
+  { abbr: 'RI', name: 'Rhode Island' },  { abbr: 'SC', name: 'South Carolina' },
+  { abbr: 'SD', name: 'South Dakota' },  { abbr: 'TN', name: 'Tennessee' },
+  { abbr: 'TX', name: 'Texas' },         { abbr: 'UT', name: 'Utah' },
+  { abbr: 'VT', name: 'Vermont' },       { abbr: 'VA', name: 'Virginia' },
+  { abbr: 'WA', name: 'Washington' },    { abbr: 'WV', name: 'West Virginia' },
+  { abbr: 'WI', name: 'Wisconsin' },     { abbr: 'WY', name: 'Wyoming' },
 ]
 
-const COLS = 11
-const ROWS = 9
-const CELL = 58   // SVG units per cell (including gap)
-const TILE = 54   // tile size (CELL - 4px gap)
-const VW = COLS * CELL
-const VH = ROWS * CELL
+const STATE_MAP = Object.fromEntries(ALL_STATES.map((s) => [s.abbr, s.name]))
 
-// ── State detection ────────────────────────────────────────────────────────────
+// ── State detection from free-text addresses ───────────────────────────────────
 
 function detectStates(addresses: string[]): Set<string> {
   const found = new Set<string>()
@@ -50,15 +44,11 @@ function detectStates(addresses: string[]): Set<string> {
   const combined = addresses.filter(Boolean).join('\n')
   const lower = combined.toLowerCase()
 
-  // Full state names (most reliable)
-  for (const [abbr, name] of Object.entries(STATE_NAMES)) {
-    if (lower.includes(name.toLowerCase())) found.add(abbr)
-  }
-
-  // Abbreviations in address context: ", TX " / ", TX," / ", TX\n" / ", TX 7…"
-  for (const abbr of Object.keys(STATE_NAMES)) {
-    const pattern = new RegExp(`, ${abbr}([\\s,\\d\\n]|$)`, 'gm')
-    if (pattern.test(combined)) found.add(abbr)
+  for (const { abbr, name } of ALL_STATES) {
+    // Full state name match
+    if (lower.includes(name.toLowerCase())) { found.add(abbr); continue }
+    // Abbreviation in address context: ", TX " / ", TX," / ", TX\n" / ", TX 7…"
+    if (new RegExp(`, ${abbr}([\\s,\\d\\n]|$)`, 'gm').test(combined)) found.add(abbr)
   }
 
   return found
@@ -109,148 +99,117 @@ export default function MapPage() {
   })
 
   const autoDetected = detectStates(addresses)
-  const visited = new Set([...autoDetected, ...manual])
 
   function toggle(abbr: string) {
+    // Auto-detected states can't be manually removed (they come from real data)
+    if (autoDetected.has(abbr)) return
     setManual((prev) => {
       const next = new Set(prev)
-      // If auto-detected and not manually toggled off, toggling removes manual flag only
-      // If not visited at all, add manually; if manually added, remove it
-      if (next.has(abbr)) {
-        next.delete(abbr)
-      } else {
-        next.add(abbr)
-      }
+      next.has(abbr) ? next.delete(abbr) : next.add(abbr)
       localStorage.setItem(storageKey, JSON.stringify([...next]))
       return next
     })
   }
 
-  const visitedSorted = [...visited].sort((a, b) =>
-    (STATE_NAMES[a] ?? a).localeCompare(STATE_NAMES[b] ?? b)
+  const visited = new Set([...autoDetected, ...manual])
+  const visitedList = [...visited].sort((a, b) =>
+    (STATE_MAP[a] ?? a).localeCompare(STATE_MAP[b] ?? b)
   )
 
   return (
     <div className="p-4 pt-6 pb-10">
-      <h1 className="font-display text-2xl text-forest mb-1">Trip Map</h1>
+      <h1 className="font-display text-2xl text-forest mb-1">States</h1>
       <p className="text-sm text-forest/50 mb-4">
-        States auto-fill from your saved addresses. Tap any state to add or remove it manually.
+        States fill in automatically from your saved addresses. Tap any state to add it manually.
       </p>
 
-      {/* ── Tile map ── */}
-      <div className="card p-3 mb-4">
-        {isLoading ? (
-          <p className="text-center text-sm text-forest/40 py-8">Loading trip data…</p>
-        ) : (
-          <svg
-            viewBox={`0 0 ${VW} ${VH}`}
-            className="w-full"
-            role="img"
-            aria-label="US states tile map"
-          >
-            {GRID.map((row, rowIdx) =>
-              row.map((abbr, colIdx) => {
-                if (!abbr) return null
-                const x = colIdx * CELL + 2
-                const y = rowIdx * CELL + 2
-                const isVisited = visited.has(abbr)
-                const isAuto = autoDetected.has(abbr)
-                const isManual = manual.has(abbr) && !isAuto
-
-                return (
-                  <g key={abbr} onClick={() => toggle(abbr)} style={{ cursor: 'pointer' }}>
-                    <rect
-                      x={x} y={y}
-                      width={TILE} height={TILE}
-                      rx={7}
-                      fill={
-                        isAuto
-                          ? '#3d7a62'
-                          : isManual
-                          ? '#6aaa8e'
-                          : '#ebe5da'
-                      }
-                      stroke={isVisited ? '#2f6050' : '#d5ccc0'}
-                      strokeWidth={isVisited ? 1.5 : 1}
-                    />
-                    <text
-                      x={x + TILE / 2}
-                      y={y + TILE / 2 + 1}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fontSize={11}
-                      fontWeight={isVisited ? '700' : '400'}
-                      fontFamily="system-ui, sans-serif"
-                      fill={isVisited ? '#ffffff' : '#9c9080'}
-                    >
-                      {abbr}
-                    </text>
-                  </g>
-                )
-              })
-            )}
-          </svg>
-        )}
-
-        {/* Legend */}
-        <div className="flex items-center gap-4 mt-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded-sm" style={{ background: '#3d7a62' }} />
-            <span className="text-xs text-forest/50">From trip addresses</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded-sm" style={{ background: '#6aaa8e' }} />
-            <span className="text-xs text-forest/50">Added manually</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded-sm" style={{ background: '#ebe5da' }} />
-            <span className="text-xs text-forest/50">Not visited</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ── States list ── */}
-      {visitedSorted.length > 0 ? (
-        <div className="card">
-          <p className="section-label mb-3">
-            States on this trip &nbsp;
-            <span className="text-forest/40 font-normal">({visitedSorted.length})</span>
+      {/* ── Summary banner ── */}
+      {visited.size > 0 && (
+        <div className="card mb-4">
+          <p className="section-label mb-2">
+            On this trip&nbsp;
+            <span className="text-forest/40 font-normal">({visitedList.length} state{visitedList.length !== 1 ? 's' : ''})</span>
           </p>
           <div className="flex flex-wrap gap-2">
-            {visitedSorted.map((abbr) => {
+            {visitedList.map((abbr) => (
+              <div
+                key={abbr}
+                className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
+                style={{ background: autoDetected.has(abbr) ? '#eef5f1' : '#f0ece4' }}
+              >
+                <span className="text-xs font-bold font-mono text-forest/80">{abbr}</span>
+                <span className="text-xs text-forest/60">{STATE_MAP[abbr]}</span>
+                {!autoDetected.has(abbr) && (
+                  <button
+                    onClick={() => toggle(abbr)}
+                    className="text-forest/30 hover:text-terracotta text-sm leading-none ml-0.5"
+                    aria-label={`Remove ${STATE_MAP[abbr]}`}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Full state list ── */}
+      <div className="card">
+        <p className="section-label mb-3">All States</p>
+        {isLoading ? (
+          <p className="text-sm text-forest/40 py-4 text-center">Loading trip data…</p>
+        ) : (
+          <div className="space-y-0.5">
+            {ALL_STATES.map(({ abbr, name }) => {
               const isAuto = autoDetected.has(abbr)
+              const isManual = manual.has(abbr)
+              const isVisited = isAuto || isManual
+
               return (
-                <div
+                <button
                   key={abbr}
-                  className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
-                  style={{ background: isAuto ? '#eef5f1' : '#f2ede6' }}
+                  onClick={() => toggle(abbr)}
+                  disabled={isAuto}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-colors ${
+                    isVisited
+                      ? 'bg-sage/15 hover:bg-sage/20'
+                      : 'hover:bg-cream'
+                  } ${isAuto ? 'cursor-default' : 'cursor-pointer'}`}
                 >
-                  <span className="text-xs font-bold text-forest/80 font-mono">{abbr}</span>
-                  <span className="text-xs text-forest/60">{STATE_NAMES[abbr]}</span>
-                  {!isAuto && (
-                    <button
-                      onClick={() => toggle(abbr)}
-                      className="text-forest/30 hover:text-terracotta text-sm leading-none ml-0.5"
-                      title="Remove"
-                      aria-label={`Remove ${STATE_NAMES[abbr]}`}
-                    >
-                      x
-                    </button>
-                  )}
-                </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold font-mono text-forest/50 w-6 shrink-0">
+                      {abbr}
+                    </span>
+                    <span className={`text-sm ${isVisited ? 'text-forest font-medium' : 'text-forest/60'}`}>
+                      {name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isAuto && (
+                      <span className="text-xs text-sage font-medium">from trip</span>
+                    )}
+                    {isManual && !isAuto && (
+                      <span className="text-xs text-forest/40">added</span>
+                    )}
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                      isVisited
+                        ? 'bg-sage border-sage'
+                        : 'border-forest/20'
+                    }`}>
+                      {isVisited && (
+                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </div>
+                  </div>
+                </button>
               )
             })}
           </div>
-        </div>
-      ) : (
-        <div className="card text-center py-8 space-y-2">
-          <p className="text-forest/50 text-sm">No states detected yet.</p>
-          <p className="text-forest/35 text-xs">
-            States fill in automatically as you add addresses to your days, wallet, and lodging.
-            You can also tap any state above to mark it manually.
-          </p>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
