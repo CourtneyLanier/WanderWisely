@@ -442,55 +442,6 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
   )
 }
 
-// ─── Activity card ────────────────────────────────────────────────────────────
-
-function ActivityCard({
-  activity,
-  onEdit,
-  onDelete,
-}: {
-  activity: Activity
-  onEdit: () => void
-  onDelete: () => void
-}) {
-  return (
-    <div className="flex items-start gap-3 py-2.5 border-b border-forest/5 last:border-0">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-medium text-forest truncate">{activity.name}</p>
-          {activity.is_booked && (
-            <span className="text-xs text-sage font-medium">✓ Booked</span>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-x-3 mt-0.5">
-          {activity.time && (
-            <span className="text-xs text-forest/50">{activity.time.slice(0, 5)}</span>
-          )}
-          {activity.address && (
-            <span className="text-xs text-forest/50 truncate">{activity.address}</span>
-          )}
-          {activity.estimated_cost != null && (
-            <span className="text-xs text-gold font-mono">${activity.estimated_cost}</span>
-          )}
-        </div>
-        {activity.confirmation_number && (
-          <p className="text-xs text-forest/40 font-mono mt-0.5">
-            #{activity.confirmation_number}
-          </p>
-        )}
-      </div>
-      <div className="flex gap-2 shrink-0">
-        <button onClick={onEdit} className="text-xs text-sage hover:text-forest transition-colors">
-          Edit
-        </button>
-        <button onClick={onDelete} className="text-xs text-terracotta hover:text-forest transition-colors">
-          ✕
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ─── Activity form ────────────────────────────────────────────────────────────
 
 const EMPTY_ACTIVITY = {
@@ -650,15 +601,19 @@ function ActivityForm({
 
 // ─── Activities section ───────────────────────────────────────────────────────
 
-const MEAL_SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner', 'snack']
 const MEAL_ICONS: Record<MealSlot, string> = {
   breakfast: '🍳', lunch: '🥗', dinner: '🍽️', snack: '🍎',
 }
 
+const SLOT_ORDER: Record<string, number> = { breakfast: 0, lunch: 1, dinner: 2, snack: 3 }
+
+const TYPE_LABELS: Record<string, string> = {
+  main: 'Main plan', side_quest: 'Side quest', reservation: 'Reservation',
+}
+
 function ActivitiesSection({ dayId }: { dayId: string }) {
   const queryClient = useQueryClient()
-  const [adding, setAdding] = useState(false)
-  const [addingSlot, setAddingSlot] = useState<MealSlot | null>(null)
+  const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Activity | undefined>(undefined)
 
   const { data: activities = [] } = useQuery({
@@ -680,114 +635,159 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['activities', dayId] }),
   })
 
-  const meals = activities.filter((a) => a.type === 'meal')
+  const meals = activities
+    .filter((a) => a.type === 'meal')
+    .sort((a, b) => (SLOT_ORDER[a.meal_slot ?? ''] ?? 99) - (SLOT_ORDER[b.meal_slot ?? ''] ?? 99))
   const plans = activities.filter((a) => a.type !== 'meal')
+  const hasItems = activities.length > 0
+  const isFormOpen = showForm || !!editing
+
+  function startEdit(a: Activity) {
+    setEditing(a)
+    setShowForm(false)
+  }
+
+  function startAdd() {
+    setEditing(undefined)
+    setShowForm(true)
+  }
 
   return (
-    <div>
-      {/* ── Meals ── */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="section-label mb-0">Meals</p>
-        </div>
-        <div className="card divide-y divide-forest/5">
-          {MEAL_SLOTS.filter((s) => s !== 'snack').map((slot) => {
-            const meal = meals.find((a) => a.meal_slot === slot)
-            return (
-              <div key={slot} className="py-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">{MEAL_ICONS[slot]}</span>
-                    <span className="text-sm font-medium text-forest capitalize">{slot}</span>
-                  </div>
-                  {!meal && (
-                    <button
-                      onClick={() => {
-                        setAddingSlot(slot)
-                        setAdding(false)
-                        setEditing(undefined)
-                      }}
-                      className="text-xs text-sage hover:text-forest transition-colors"
-                    >
-                      + Add
-                    </button>
-                  )}
-                </div>
-                {meal && !editing && (
-                  <div className="mt-1 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-forest">{meal.name}</p>
-                      <div className="flex gap-2 mt-0.5">
-                        {meal.time && <span className="text-xs text-forest/50">{meal.time.slice(0, 5)}</span>}
-                        {meal.estimated_cost != null && (
-                          <span className="text-xs text-gold font-mono">${meal.estimated_cost}</span>
-                        )}
-                        {meal.is_booked && <span className="text-xs text-sage">✓ Booked</span>}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => { setEditing(meal); setAdding(false); setAddingSlot(null) }}
-                        className="text-xs text-sage hover:text-forest transition-colors">Edit</button>
-                      <button onClick={() => deleteMutation.mutate(meal.id)}
-                        className="text-xs text-terracotta hover:text-forest transition-colors">✕</button>
-                    </div>
-                  </div>
-                )}
-                {editing?.id === meal?.id && (
-                  <ActivityForm dayId={dayId} initial={editing}
-                    onDone={() => setEditing(undefined)} />
-                )}
-                {addingSlot === slot && (
-                  <ActivityForm
-                    dayId={dayId}
-                    initialType="meal"
-                    initialSlot={slot}
-                    onDone={() => setAddingSlot(null)}
-                  />
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* ── Plans & side quests ── */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="section-label mb-0">Activities</p>
+    <div className="mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="section-label mb-0">Plans & Meals</p>
+        {!isFormOpen && (
           <button
-            onClick={() => { setAdding(true); setEditing(undefined); setAddingSlot(null) }}
+            onClick={startAdd}
             className="text-xs text-sage hover:text-forest transition-colors"
           >
             + Add
           </button>
-        </div>
-
-        {plans.length > 0 && (
-          <div className="card">
-            {plans.map((a) =>
-              editing?.id === a.id ? (
-                <ActivityForm key={a.id} dayId={dayId} initial={editing}
-                  onDone={() => setEditing(undefined)} />
-              ) : (
-                <ActivityCard key={a.id} activity={a}
-                  onEdit={() => { setEditing(a); setAdding(false); setAddingSlot(null) }}
-                  onDelete={() => deleteMutation.mutate(a.id)} />
-              )
-            )}
-          </div>
-        )}
-
-        {plans.length === 0 && !adding && (
-          <div className="card text-center py-5">
-            <p className="text-forest/40 text-sm">No activities yet.</p>
-          </div>
-        )}
-
-        {adding && !editing && (
-          <ActivityForm dayId={dayId} onDone={() => setAdding(false)} />
         )}
       </div>
+
+      {/* Empty state */}
+      {!hasItems && !isFormOpen && (
+        <div className="card text-center py-6 space-y-2">
+          <p className="text-forest/40 text-sm">Nothing planned yet.</p>
+          <button
+            onClick={startAdd}
+            className="text-xs text-sage hover:text-forest transition-colors"
+          >
+            + Add a meal or activity
+          </button>
+        </div>
+      )}
+
+      {/* Meals */}
+      {meals.length > 0 && (
+        <div className="card mb-3 divide-y divide-forest/5">
+          {meals.map((meal) =>
+            editing?.id === meal.id ? (
+              <div key={meal.id} className="py-2">
+                <ActivityForm dayId={dayId} initial={editing} onDone={() => setEditing(undefined)} />
+              </div>
+            ) : (
+              <div key={meal.id} className="py-2.5 flex items-start justify-between">
+                <div className="flex items-start gap-2.5">
+                  <span className="text-lg mt-0.5 shrink-0">
+                    {MEAL_ICONS[meal.meal_slot as MealSlot] ?? '🍽️'}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-forest/40 capitalize">{meal.meal_slot}</span>
+                      {meal.is_booked && <span className="text-xs text-sage">✓ Booked</span>}
+                    </div>
+                    <p className="text-sm font-medium text-forest leading-tight truncate">{meal.name}</p>
+                    <div className="flex flex-wrap gap-x-3 mt-0.5">
+                      {meal.time && <span className="text-xs text-forest/50">{meal.time.slice(0, 5)}</span>}
+                      {meal.address && (
+                        <span className="text-xs text-forest/50 truncate max-w-[160px]">{meal.address}</span>
+                      )}
+                      {meal.estimated_cost != null && (
+                        <span className="text-xs text-gold font-mono">${meal.estimated_cost}</span>
+                      )}
+                    </div>
+                    {meal.confirmation_number && (
+                      <p className="text-xs text-forest/40 font-mono mt-0.5">#{meal.confirmation_number}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-3 shrink-0 ml-3">
+                  <button
+                    onClick={() => startEdit(meal)}
+                    className="text-xs text-sage hover:text-forest transition-colors"
+                  >Edit</button>
+                  <button
+                    onClick={() => deleteMutation.mutate(meal.id)}
+                    className="text-xs text-terracotta hover:text-forest transition-colors"
+                  >✕</button>
+                </div>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* Other activities */}
+      {plans.length > 0 && (
+        <div className="card mb-3">
+          {plans.map((a) =>
+            editing?.id === a.id ? (
+              <div key={a.id} className="py-2">
+                <ActivityForm dayId={dayId} initial={editing} onDone={() => setEditing(undefined)} />
+              </div>
+            ) : (
+              <div key={a.id} className="flex items-start gap-3 py-2.5 border-b border-forest/5 last:border-0">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-medium text-forest/40 uppercase tracking-wide">
+                      {TYPE_LABELS[a.type ?? 'main'] ?? a.type}
+                    </span>
+                    {a.is_booked && <span className="text-xs text-sage font-medium">✓ Booked</span>}
+                  </div>
+                  <p className="text-sm font-medium text-forest truncate">{a.name}</p>
+                  <div className="flex flex-wrap gap-x-3 mt-0.5">
+                    {a.time && <span className="text-xs text-forest/50">{a.time.slice(0, 5)}</span>}
+                    {a.address && <span className="text-xs text-forest/50 truncate max-w-[180px]">{a.address}</span>}
+                    {a.estimated_cost != null && (
+                      <span className="text-xs text-gold font-mono">${a.estimated_cost}</span>
+                    )}
+                  </div>
+                  {a.confirmation_number && (
+                    <p className="text-xs text-forest/40 font-mono mt-0.5">#{a.confirmation_number}</p>
+                  )}
+                </div>
+                <div className="flex gap-3 shrink-0">
+                  <button
+                    onClick={() => startEdit(a)}
+                    className="text-xs text-sage hover:text-forest transition-colors"
+                  >Edit</button>
+                  <button
+                    onClick={() => deleteMutation.mutate(a.id)}
+                    className="text-xs text-terracotta hover:text-forest transition-colors"
+                  >✕</button>
+                </div>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* Add form */}
+      {showForm && !editing && (
+        <ActivityForm dayId={dayId} onDone={() => setShowForm(false)} />
+      )}
+
+      {/* Add another link when items already exist */}
+      {hasItems && !isFormOpen && (
+        <button
+          onClick={startAdd}
+          className="text-xs text-sage hover:text-forest transition-colors mt-0.5"
+        >
+          + Add another
+        </button>
+      )}
     </div>
   )
 }

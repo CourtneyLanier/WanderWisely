@@ -11,6 +11,7 @@ import WalletPage from '@/pages/owner/WalletPage'
 import RoutePage from '@/pages/owner/RoutePage'
 import BudgetPage from '@/pages/owner/BudgetPage'
 import SettingsPage from '@/pages/owner/SettingsPage'
+import MapPage from '@/pages/owner/MapPage'
 import GuestLayout from '@/pages/guest/GuestLayout'
 import GuestDaysPage from '@/pages/guest/GuestDaysPage'
 import GuestWalletPage from '@/pages/guest/GuestWalletPage'
@@ -64,6 +65,7 @@ export default function App() {
             <Route path="/route" element={<RoutePage />} />
             <Route path="/budget" element={<BudgetPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/map" element={<MapPage />} />
           </Route>
         </Route>
 

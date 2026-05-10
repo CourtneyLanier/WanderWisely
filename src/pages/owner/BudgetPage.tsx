@@ -480,10 +480,42 @@ function HotelCard({
     () => hotelReservations.reduce((s, r) => s + (r.cost ?? 0), 0),
     [hotelReservations]
   )
-  const totalPaid = useMemo(() => hotelLogs.reduce((s, l) => s + l.amount, 0), [hotelLogs])
+
+  // "Paid" = reservations explicitly marked paid (via button) + any manual log entries
+  const paidViaReservations = useMemo(
+    () => hotelReservations.filter((r) => r.paid).reduce((s, r) => s + (r.cost ?? 0), 0),
+    [hotelReservations]
+  )
+  const paidViaLogs = useMemo(() => hotelLogs.reduce((s, l) => s + l.amount, 0), [hotelLogs])
+  const totalPaid = paidViaReservations + paidViaLogs
   const outstanding = totalBooked - totalPaid
   const pct = totalBooked > 0 ? Math.min(100, (totalPaid / totalBooked) * 100) : 0
   const overPaid = totalPaid > totalBooked && totalBooked > 0
+
+  // Toggle paid status on a reservation
+  const togglePaidMutation = useMutation({
+    mutationFn: async ({ id, paid, cost, label }: { id: string; paid: boolean; cost: number | null; label: string }) => {
+      // Update the reservation paid flag
+      const { error } = await supabase.from('reservations').update({ paid }).eq('id', id)
+      if (error) throw error
+
+      // If marking paid and cost is known, also log it so Budget totals include it
+      if (paid && cost != null && cost > 0) {
+        const { error: logErr } = await supabase.from('spending_log').insert({
+          trip_id: tripId,
+          card: 'hotel',
+          amount: cost,
+          label: `Paid: ${label}`,
+          entry_type: 'per_meal',
+        })
+        if (logErr) throw logErr
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hotel-reservations-budget', tripId] })
+      queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] })
+    },
+  })
 
   const addMutation = useMutation({
     mutationFn: async () => {
@@ -539,7 +571,7 @@ function HotelCard({
           {/* Stats row */}
           <div className="grid grid-cols-3 gap-2 mb-4 text-center">
             <div className="card-inset py-2.5 px-1">
-              <p className="text-xs text-forest/50 mb-0.5">Booked</p>
+              <p className="text-xs text-forest/50 mb-0.5">Total booked</p>
               <p className="font-mono text-sm font-medium text-forest">{dollar(Math.round(totalBooked))}</p>
             </div>
             <div className="card-inset py-2.5 px-1">
@@ -547,30 +579,61 @@ function HotelCard({
               <p className="font-mono text-sm font-medium text-sage">{dollar(Math.round(totalPaid))}</p>
             </div>
             <div className="card-inset py-2.5 px-1">
-              <p className="text-xs text-forest/50 mb-0.5">Outstanding</p>
-              <p className={`font-mono text-sm font-medium ${outstanding > 0 ? 'text-forest' : 'text-sage'}`}>
-                {dollar(Math.round(Math.max(0, outstanding)))}
+              <p className="text-xs text-forest/50 mb-0.5">Still owed</p>
+              <p className={`font-mono text-sm font-medium ${outstanding > 0 ? 'text-terracotta' : 'text-sage'}`}>
+                {outstanding > 0 ? dollar(Math.round(outstanding)) : '✓ Paid off'}
               </p>
             </div>
           </div>
         </>
       )}
 
-      {/* Hotel reservations list */}
+      {/* Hotel reservations — per-reservation mark paid */}
       {hotelReservations.length > 0 && (
-        <div className="mb-3 space-y-1.5">
-          <p className="section-label mb-1">From Wallet</p>
-          {hotelReservations.map((r) => (
-            <div key={r.id} className="flex items-center justify-between text-sm">
-              <div className="flex-1 min-w-0 mr-2">
-                <span className="text-forest truncate block">{r.title || r.provider || 'Hotel'}</span>
-                {r.date && <span className="text-xs text-forest/40">{fmtResDate(r.date)}</span>}
+        <div className="mb-3 space-y-2">
+          <p className="section-label mb-1.5">Hotels</p>
+          {hotelReservations.map((r) => {
+            const resLabel = r.title || r.provider || 'Hotel'
+            return (
+              <div
+                key={r.id}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border transition-colors ${
+                  r.paid
+                    ? 'bg-sage/8 border-sage/20'
+                    : 'bg-forest/[0.03] border-forest/8'
+                }`}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-forest truncate">{resLabel}</span>
+                    {r.paid && <span className="text-xs text-sage font-medium shrink-0">✓ Paid</span>}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {r.date && <span className="text-xs text-forest/40">{fmtResDate(r.date)}</span>}
+                    {r.cost != null && (
+                      <span className="font-mono text-xs text-gold">{dollar(r.cost)}</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => togglePaidMutation.mutate({
+                    id: r.id,
+                    paid: !r.paid,
+                    cost: r.cost,
+                    label: resLabel,
+                  })}
+                  disabled={togglePaidMutation.isPending}
+                  className={`shrink-0 text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${
+                    r.paid
+                      ? 'bg-forest/10 text-forest/50 hover:bg-terracotta/10 hover:text-terracotta'
+                      : 'bg-sage text-white hover:bg-sage/80'
+                  }`}
+                >
+                  {r.paid ? 'Undo' : 'Mark paid'}
+                </button>
               </div>
-              {r.cost != null && (
-                <span className="font-mono text-forest shrink-0">{dollar(r.cost)}</span>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -580,15 +643,15 @@ function HotelCard({
         </p>
       )}
 
-      {/* Log payment form */}
+      {/* Manual payment log (for deposits, partial pays, etc.) */}
       {adding && (
         <div className="bg-cream rounded-lg p-3 mb-3 space-y-2 border border-forest/10">
-          <p className="text-xs font-medium text-forest/50 uppercase tracking-wide">Log hotel payment</p>
+          <p className="text-xs font-medium text-forest/50 uppercase tracking-wide">Log a partial payment or deposit</p>
           <input
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="e.g. Hampton Inn – Night 1 deposit"
+            placeholder="e.g. Hampton Inn – deposit"
             className="input"
             autoFocus
           />
@@ -619,14 +682,14 @@ function HotelCard({
 
       {!adding && (
         <button onClick={() => setAdding(true)} className="btn-secondary w-full text-xs py-2">
-          + Log payment
+          + Log partial payment / deposit
         </button>
       )}
 
-      {/* Payment history */}
+      {/* Manual payment history */}
       {hotelLogs.length > 0 && (
         <div className="mt-3 pt-3 border-t border-forest/10 space-y-1.5">
-          <p className="section-label mb-1.5">Payments logged</p>
+          <p className="section-label mb-1.5">Manual payments</p>
           {hotelLogs.map((l) => (
             <div key={l.id} className="flex items-center justify-between text-sm">
               <span className="text-forest truncate flex-1 mr-2">{l.label || 'Hotel payment'}</span>

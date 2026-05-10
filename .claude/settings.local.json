@@ -19,7 +19,15 @@
       "Bash(git -C /c/Users/Jered/MyApps/WanderWisely push origin --delete 1234-wanderwisely-init)",
       "Bash(git -C /c/Users/Jered/MyApps/WanderWisely branch -d 1234-wanderwisely-init)",
       "Bash(git -C /c/Users/Jered/MyApps/WanderWisely branch -D 1234-wanderwisely-init)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(gh pr *)",
+      "Read(//c/Users/Jered/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/5d41e3af-49e4-4eba-a475-3f7ea74a0a6b/44d9bcb4-c8d4-4f47-8bd8-9ac59e8b5ac8/skills/xlsx/**)",
+      "Bash(python -)",
+      "Bash(python3 -)",
+      "Bash(xargs wc *)",
+      "Bash(xargs ls *)",
+      "Bash(xargs grep *)",
+      "Bash(find /c/Users/Jered/MyApps/WanderWisely/public -type f -exec ls -lh {} \\\\;)"
     ]
   }
 }

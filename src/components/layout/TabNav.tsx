@@ -54,6 +54,17 @@ function IconRoute({ active }: { active: boolean }) {
   )
 }
 
+function IconMap({ active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={active ? 2 : 1.5} strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+      <line x1="8" y1="2" x2="8" y2="18" />
+      <line x1="16" y1="6" x2="16" y2="22" />
+    </svg>
+  )
+}
+
 function IconSettings({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -65,12 +76,13 @@ function IconSettings({ active }: { active: boolean }) {
 }
 
 const tabs = [
-  { to: '/overview', label: 'Overview', Icon: IconOverview },
+  { to: '/overview', label: 'Home',     Icon: IconOverview },
   { to: '/days',     label: 'Days',     Icon: IconDays     },
   { to: '/wallet',   label: 'Wallet',   Icon: IconWallet   },
   { to: '/route',    label: 'Route',    Icon: IconRoute    },
   { to: '/budget',   label: 'Budget',   Icon: IconBudget   },
-  { to: '/settings', label: 'Settings', Icon: IconSettings },
+  { to: '/map',      label: 'Map',      Icon: IconMap      },
+  { to: '/settings', label: 'Setup',    Icon: IconSettings },
 ]
 
 export default function TabNav() {

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
@@ -34,15 +34,46 @@ function embedUrl(origin: string, destination: string, waypoints: string[]) {
   return `https://www.google.com/maps/embed/v1/directions?${params.toString()}`
 }
 
-function loadWaypoints(dayId: string): string[] {
+function loadCustomWaypoints(dayId: string): string[] {
   try {
     const raw = localStorage.getItem(`ww-waypoints-${dayId}`)
     return raw ? (JSON.parse(raw) as string[]) : []
   } catch { return [] }
 }
 
-function persistWaypoints(dayId: string, wps: string[]) {
+function persistCustomWaypoints(dayId: string, wps: string[]) {
   localStorage.setItem(`ww-waypoints-${dayId}`, JSON.stringify(wps))
+}
+
+// ── Driving time calculation (Nominatim geocoding + OSRM routing) ─────────────
+// Free, no API key required. Works offline fallback: user can still edit manually.
+
+async function geocode(address: string): Promise<{ lat: number; lon: number } | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } })
+    const data = await res.json()
+    if (!data.length) return null
+    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
+  } catch { return null }
+}
+
+async function calcDriveTime(
+  origin: string,
+  destination: string
+): Promise<{ hours: number; miles: number } | null> {
+  const [from, to] = await Promise.all([geocode(origin), geocode(destination)])
+  if (!from || !to) return null
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`
+    const res = await fetch(url)
+    const data = await res.json()
+    if (data.code !== 'Ok' || !data.routes?.length) return null
+    const route = data.routes[0]
+    const hours = Math.round((route.duration / 3600) * 4) / 4  // round to nearest 0.25
+    const miles = Math.round(route.distance / 1609.34)
+    return { hours, miles }
+  } catch { return null }
 }
 
 // ── LocationField ─────────────────────────────────────────────────────────────
@@ -162,21 +193,36 @@ function DayRoute({
   day,
   hotelOrigin,
   hotelDestination,
+  activityWaypoints,
 }: {
   day: Day
   hotelOrigin: string | null
   hotelDestination: string | null
+  activityWaypoints: { name: string; address: string; time: string | null }[]
 }) {
   const queryClient = useQueryClient()
-  const [waypoints, setWaypoints] = useState<string[]>(() => loadWaypoints(day.id))
+  const [customWaypoints, setCustomWaypoints] = useState<string[]>(() => loadCustomWaypoints(day.id))
   const [editingWaypoints, setEditingWaypoints] = useState(false)
-  const [waypointDraft, setWaypointDraft] = useState(waypoints.join('\n'))
+  const [waypointDraft, setWaypointDraft] = useState(customWaypoints.join('\n'))
   const [editingTime, setEditingTime] = useState(false)
   const [timeDraft, setTimeDraft] = useState(day.departure_time ?? '')
+  const [calcState, setCalcState] = useState<'idle' | 'calculating' | 'error'>('idle')
+  const [calcError, setCalcError] = useState('')
+
+  // Reset calc state if day data changes
+  useEffect(() => {
+    setCalcState('idle')
+  }, [day.drive_hours, day.drive_miles])
 
   // Effective values: manual entry wins over wallet fallback
   const origin = day.start_location || hotelOrigin
   const destination = day.end_location || hotelDestination
+
+  // All waypoints: activity reservations (sorted by time) + custom user-added
+  const allWaypoints = useMemo(() => {
+    const actAddr = activityWaypoints.map((w) => w.address)
+    return [...actAddr, ...customWaypoints]
+  }, [activityWaypoints, customWaypoints])
 
   const saveTimeMutation = useMutation({
     mutationFn: async (time: string) => {
@@ -199,16 +245,37 @@ function DayRoute({
     queryClient.invalidateQueries({ queryKey: ['days'] })
   }
 
-  function saveWaypoints() {
+  async function calculateDrive() {
+    if (!origin || !destination) return
+    setCalcState('calculating')
+    setCalcError('')
+    try {
+      const result = await calcDriveTime(origin, destination)
+      if (!result) throw new Error('Could not calculate route — check that both addresses are recognizable.')
+      const { error } = await supabase
+        .from('days')
+        .update({ drive_hours: result.hours, drive_miles: result.miles })
+        .eq('id', day.id)
+      if (error) throw error
+      queryClient.invalidateQueries({ queryKey: ['days'] })
+      setCalcState('idle')
+    } catch (e) {
+      setCalcError((e as Error).message)
+      setCalcState('error')
+    }
+  }
+
+  function saveCustomWaypoints() {
     const parsed = waypointDraft.split('\n').map((s) => s.trim()).filter(Boolean)
-    setWaypoints(parsed)
-    persistWaypoints(day.id, parsed)
+    setCustomWaypoints(parsed)
+    persistCustomWaypoints(day.id, parsed)
     setEditingWaypoints(false)
   }
 
   const hasRoute = !!(origin && destination)
-  const embed = hasRoute ? embedUrl(origin, destination, waypoints) : null
-  const mapsLink = hasRoute ? openMapsUrl(origin, destination, waypoints) : null
+  const embed = hasRoute ? embedUrl(origin, destination, allWaypoints) : null
+  const mapsLink = hasRoute ? openMapsUrl(origin, destination, allWaypoints) : null
+  const hasDriveTime = day.drive_hours != null || day.drive_miles != null
 
   return (
     <div className="card space-y-3">
@@ -227,6 +294,56 @@ function DayRoute({
           </a>
         )}
       </div>
+
+      {/* Drive time summary */}
+      {hasDriveTime && (
+        <div className="flex items-center gap-3 bg-deep-teal/[0.06] rounded-lg px-3 py-2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-deep-teal shrink-0">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span className="text-sm text-forest font-medium">
+            {day.drive_hours != null ? `${day.drive_hours} hrs` : ''}
+            {day.drive_hours != null && day.drive_miles != null ? ' · ' : ''}
+            {day.drive_miles != null ? `${day.drive_miles} mi` : ''}
+          </span>
+          <button
+            onClick={calculateDrive}
+            disabled={!hasRoute || calcState === 'calculating'}
+            className="text-xs text-forest/40 hover:text-sage transition-colors ml-auto"
+            title="Recalculate"
+          >
+            ↻
+          </button>
+        </div>
+      )}
+
+      {/* Calculate prompt */}
+      {!hasDriveTime && hasRoute && (
+        <div>
+          {calcState === 'idle' && (
+            <button
+              onClick={calculateDrive}
+              className="w-full flex items-center justify-center gap-2 text-sm text-deep-teal bg-deep-teal/[0.06] hover:bg-deep-teal/10 rounded-lg py-2 transition-colors"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+              Calculate drive time
+            </button>
+          )}
+          {calcState === 'calculating' && (
+            <p className="text-xs text-forest/40 text-center animate-pulse py-1">Calculating route…</p>
+          )}
+          {calcState === 'error' && (
+            <div className="bg-terracotta/10 rounded-lg px-3 py-2">
+              <p className="text-xs text-terracotta">{calcError}</p>
+              <button onClick={() => setCalcState('idle')} className="text-xs text-forest/50 underline mt-1">Try again</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Start time */}
       <div className="flex items-center gap-2">
@@ -281,8 +398,30 @@ function DayRoute({
           onSave={(v) => saveLocation('start_location', v)}
         />
 
-        {waypoints.map((wp, i) => (
-          <div key={i} className="flex items-stretch gap-3">
+        {/* Activity reservation waypoints (auto, from DB) */}
+        {activityWaypoints.map((wp, i) => (
+          <div key={`act-${i}`} className="flex items-stretch gap-3">
+            <div className="flex flex-col items-center shrink-0 w-4">
+              <div className="w-2.5 h-2.5 rounded-full bg-deep-teal/50 mt-0.5 shrink-0" />
+              <div className="w-px bg-forest/15 flex-1 my-1" />
+            </div>
+            <div className="pb-2 min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <p className="text-xs text-forest/40 uppercase tracking-wide">Activity</p>
+                <span className="text-[10px] text-deep-teal/60 bg-deep-teal/8 rounded px-1 py-px">wallet</span>
+                {wp.time && (
+                  <span className="text-[10px] text-forest/40">{fmtTime(wp.time)}</span>
+                )}
+              </div>
+              <p className="text-sm font-medium text-forest/80 leading-snug truncate">{wp.name}</p>
+              <p className="text-xs text-forest/50 leading-snug truncate">{wp.address}</p>
+            </div>
+          </div>
+        ))}
+
+        {/* Custom user waypoints */}
+        {customWaypoints.map((wp, i) => (
+          <div key={`custom-${i}`} className="flex items-stretch gap-3">
             <div className="flex flex-col items-center shrink-0 w-4">
               <div className="w-2.5 h-2.5 rounded-full bg-gold/60 mt-0.5 shrink-0" />
               <div className="w-px bg-forest/15 flex-1 my-1" />
@@ -304,10 +443,10 @@ function DayRoute({
         />
       </div>
 
-      {/* Waypoints editor */}
+      {/* Custom waypoints editor */}
       {editingWaypoints ? (
         <div className="space-y-2 pt-2 border-t border-forest/10">
-          <p className="text-xs text-forest/50">One waypoint per line (name, city, or full address)</p>
+          <p className="text-xs text-forest/50">One stop per line (name, city, or full address)</p>
           <textarea
             value={waypointDraft}
             onChange={(e) => setWaypointDraft(e.target.value)}
@@ -317,20 +456,20 @@ function DayRoute({
             autoFocus
           />
           <div className="flex gap-2">
-            <button onClick={saveWaypoints} className="btn-primary text-sm flex-1">Save</button>
+            <button onClick={saveCustomWaypoints} className="btn-primary text-sm flex-1">Save</button>
             <button onClick={() => setEditingWaypoints(false)} className="btn-secondary text-sm px-3">Cancel</button>
           </div>
         </div>
       ) : (
         <button
-          onClick={() => { setWaypointDraft(waypoints.join('\n')); setEditingWaypoints(true) }}
+          onClick={() => { setWaypointDraft(customWaypoints.join('\n')); setEditingWaypoints(true) }}
           className="text-xs text-sage hover:text-forest transition-colors"
         >
-          {waypoints.length > 0 ? 'Edit waypoints' : '+ Add waypoints'}
+          {customWaypoints.length > 0 ? 'Edit custom stops' : '+ Add custom stops'}
         </button>
       )}
 
-      {/* Map embed */}
+      {/* Map embed (requires Google Maps API key in .env) */}
       {embed && (
         <div className="rounded-lg overflow-hidden border border-forest/10" style={{ height: 220 }}>
           <iframe
@@ -342,6 +481,13 @@ function DayRoute({
             title={`Map – Day ${day.day_number}`}
           />
         </div>
+      )}
+
+      {/* No-key hint */}
+      {!embed && hasRoute && !MAPS_KEY && (
+        <p className="text-xs text-forest/30">
+          Add <span className="font-mono">VITE_GOOGLE_MAPS_API_KEY</span> to .env to see embedded map previews.
+        </p>
       )}
     </div>
   )
@@ -377,6 +523,23 @@ export default function RoutePage() {
     enabled: !!tripId,
   })
 
+  // Activity-type reservations with addresses, for auto-waypoints
+  const { data: activityRes = [] } = useQuery({
+    queryKey: ['activity-reservations-route', tripId],
+    queryFn: async (): Promise<Reservation[]> => {
+      const { data, error } = await supabase
+        .from('reservations').select('*')
+        .eq('trip_id', tripId!)
+        .in('type', ['activity', 'restaurant'])
+        .not('address', 'is', null)
+        .order('date').order('time', { nullsFirst: false })
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: !!tripId,
+  })
+
+  // Hotel address lookup by date
   const hotelByDate = useMemo(() => {
     const map: Record<string, string> = {}
     for (const r of hotelRes) {
@@ -384,6 +547,21 @@ export default function RoutePage() {
     }
     return map
   }, [hotelRes])
+
+  // Activity waypoints grouped by date
+  const activityByDate = useMemo(() => {
+    const map: Record<string, { name: string; address: string; time: string | null }[]> = {}
+    for (const r of activityRes) {
+      if (!r.date || !r.address) continue
+      if (!map[r.date]) map[r.date] = []
+      map[r.date].push({
+        name: r.title || r.provider || r.type || 'Activity',
+        address: r.address,
+        time: r.time,
+      })
+    }
+    return map
+  }, [activityRes])
 
   if (!tripId) {
     return (
@@ -398,13 +576,8 @@ export default function RoutePage() {
       <div className="mb-5">
         <h1 className="font-display text-2xl text-forest leading-tight">Route</h1>
         <p className="text-sm text-forest/50 mt-0.5">
-          Tap any field to edit. Hotel addresses from your Wallet fill in automatically.
+          Hotel addresses and booked activities fill in automatically from your Wallet. Tap any field to override.
         </p>
-        {!MAPS_KEY && (
-          <p className="text-xs text-forest/30 mt-1">
-            Add <span className="font-mono">VITE_GOOGLE_MAPS_API_KEY</span> to .env for embedded map previews.
-          </p>
-        )}
       </div>
 
       {isLoading && (
@@ -425,6 +598,7 @@ export default function RoutePage() {
               day={day}
               hotelOrigin={days[i - 1]?.date ? (hotelByDate[days[i - 1].date!] ?? null) : null}
               hotelDestination={day.date ? (hotelByDate[day.date] ?? null) : null}
+              activityWaypoints={day.date ? (activityByDate[day.date] ?? []) : []}
             />
           ))}
         </div>

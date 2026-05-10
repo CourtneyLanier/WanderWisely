@@ -4,7 +4,36 @@ import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
-import type { Budget } from '@/types'
+import type { Budget, Day, Lodging, Activity, Reservation } from '@/types'
+
+// ── Sync types ─────────────────────────────────────────────────────────────────
+
+interface LocationChange {
+  field: 'start_location' | 'end_location'
+  current: string | null
+  proposed: string
+  source: string
+}
+interface NewActivity {
+  name: string
+  time: string | null
+  address: string | null
+  confirmation_number: string | null
+}
+interface DaySyncChange {
+  dayId: string
+  dayNumber: number
+  date: string | null
+  locationChanges: LocationChange[]
+  newActivities: NewActivity[]
+}
+
+function fmtDay(dateStr: string | null) {
+  if (!dateStr) return ''
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric',
+  })
+}
 
 export default function SettingsPage() {
   const { tripId, signOut } = useAppStore()
@@ -39,6 +68,393 @@ export default function SettingsPage() {
 
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportingGpx, setExportingGpx] = useState(false)
+
+  // Sync from Wallet state
+  const [buildingPreview, setBuildingPreview] = useState(false)
+  const [syncPreview, setSyncPreview] = useState<DaySyncChange[] | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncApplied, setSyncApplied] = useState(false)
+
+  // ── Sync from Wallet ────────────────────────────────────────────────────────
+
+  async function buildSyncPlan(): Promise<DaySyncChange[]> {
+    if (!tripId) return []
+
+    const [daysRes, reservationsRes, activitiesRes] = await Promise.all([
+      supabase.from('days').select('*').eq('trip_id', tripId).order('day_number'),
+      supabase.from('reservations').select('*').eq('trip_id', tripId).order('date', { nullsFirst: false }),
+      supabase.from('activities').select('id, day_id, name, confirmation_number').order('sort_order'),
+    ])
+
+    const days: Day[] = daysRes.data ?? []
+    const reservations: Reservation[] = reservationsRes.data ?? []
+    const activities = activitiesRes.data ?? []
+
+    // Index: date → day
+    const dayByDate = new Map<string, Day>()
+    for (const day of days) {
+      if (day.date) dayByDate.set(day.date, day)
+    }
+
+    // Duplicate guards
+    const existingConfNums = new Set(
+      activities.filter((a) => a.confirmation_number).map((a) => a.confirmation_number!)
+    )
+    const existingDayName = new Set(
+      activities.filter((a) => a.name).map((a) => `${a.day_id}::${a.name!.toLowerCase()}`)
+    )
+
+    const changeMap = new Map<string, DaySyncChange>()
+    function getDayChange(day: Day): DaySyncChange {
+      if (!changeMap.has(day.id)) {
+        changeMap.set(day.id, {
+          dayId: day.id, dayNumber: day.day_number, date: day.date,
+          locationChanges: [], newActivities: [],
+        })
+      }
+      return changeMap.get(day.id)!
+    }
+
+    // Sort hotel reservations by date
+    const hotels = reservations
+      .filter((r) => r.type === 'hotel' && r.date && r.address)
+      .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
+
+    // For each hotel check-in: propose end_location on that day and start_location from previous hotel
+    for (let i = 0; i < hotels.length; i++) {
+      const hotel = hotels[i]
+      const day = dayByDate.get(hotel.date!)
+      if (!day) continue
+
+      // end_location = this hotel (only if blank)
+      if (!day.end_location) {
+        const dc = getDayChange(day)
+        if (!dc.locationChanges.find((c) => c.field === 'end_location')) {
+          dc.locationChanges.push({
+            field: 'end_location',
+            current: null,
+            proposed: hotel.address!,
+            source: hotel.title || hotel.provider || 'Hotel',
+          })
+        }
+      }
+
+      // start_location = previous hotel address (only if blank)
+      if (!day.start_location && i > 0) {
+        const prevHotel = hotels[i - 1]
+        const dc = getDayChange(day)
+        if (!dc.locationChanges.find((c) => c.field === 'start_location')) {
+          dc.locationChanges.push({
+            field: 'start_location',
+            current: null,
+            proposed: prevHotel.address!,
+            source: prevHotel.title || prevHotel.provider || 'Hotel',
+          })
+        }
+      }
+    }
+
+    // Activity/restaurant reservations → propose as activities on matching day
+    const actRes = reservations.filter(
+      (r) => (r.type === 'activity' || r.type === 'restaurant') && r.date
+    )
+    for (const res of actRes) {
+      const day = dayByDate.get(res.date!)
+      if (!day) continue
+
+      // Duplicate check
+      if (res.confirmation_number && existingConfNums.has(res.confirmation_number)) continue
+      const nameKey = `${day.id}::${(res.title || res.provider || '').toLowerCase()}`
+      if ((res.title || res.provider) && existingDayName.has(nameKey)) continue
+
+      getDayChange(day).newActivities.push({
+        name: res.title || res.provider || 'Reservation',
+        time: res.time,
+        address: res.address,
+        confirmation_number: res.confirmation_number,
+      })
+    }
+
+    return [...changeMap.values()].filter(
+      (c) => c.locationChanges.length > 0 || c.newActivities.length > 0
+    )
+  }
+
+  async function handleBuildPreview() {
+    setBuildingPreview(true)
+    try {
+      const plan = await buildSyncPlan()
+      setSyncPreview(plan)
+    } finally {
+      setBuildingPreview(false)
+    }
+  }
+
+  async function applySyncPlan(plan: DaySyncChange[]) {
+    setSyncing(true)
+    try {
+      for (const dc of plan) {
+        // Apply location changes
+        if (dc.locationChanges.length > 0) {
+          const updates: { start_location?: string; end_location?: string } = {}
+          for (const lc of dc.locationChanges) updates[lc.field] = lc.proposed
+          await supabase.from('days').update(updates).eq('id', dc.dayId)
+        }
+
+        // Insert new activities
+        for (const act of dc.newActivities) {
+          const { data: existing } = await supabase
+            .from('activities').select('sort_order').eq('day_id', dc.dayId)
+            .order('sort_order', { ascending: false }).limit(1)
+          const nextSort = existing?.[0]?.sort_order != null ? existing[0].sort_order + 1 : 0
+          await supabase.from('activities').insert({
+            day_id: dc.dayId,
+            name: act.name,
+            type: 'reservation' as const,
+            time: act.time,
+            address: act.address,
+            confirmation_number: act.confirmation_number,
+            is_booked: true,
+            sort_order: nextSort,
+          })
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['days', tripId] })
+      queryClient.invalidateQueries({ queryKey: ['activities'] })
+      setSyncPreview(null)
+      setSyncApplied(true)
+      setTimeout(() => setSyncApplied(false), 3000)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+
+  // ── Garmin GPX export ────────────────────────────────────────────────────────
+
+  async function exportGarminGpx() {
+    if (!trip || !tripId) return
+    setExportingGpx(true)
+    try {
+      const daysRes = await supabase
+        .from('days').select('*').eq('trip_id', tripId).order('day_number')
+      const days: Day[] = daysRes.data ?? []
+
+      // Nominatim geocode (rate-limited: 1 req/s per usage policy)
+      async function geocode(address: string): Promise<{ lat: number; lon: number } | null> {
+        await new Promise((r) => setTimeout(r, 1100))
+        try {
+          const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`
+          const res = await fetch(url, { headers: { 'User-Agent': 'WanderWisely/1.0' } })
+          const data = await res.json() as { lat: string; lon: string }[]
+          if (data[0]) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
+        } catch { /* skip */ }
+        return null
+      }
+
+      const waypoints: string[] = []
+
+      // End-of-day stops (hotels / destinations)
+      for (const day of days) {
+        const addr = day.end_location
+        if (!addr) continue
+        const coords = await geocode(addr)
+        if (!coords) continue
+        const dateStr = day.date ?? ''
+        const label = `Day ${day.day_number}${dateStr ? ' ' + dateStr : ''}`
+        waypoints.push(
+          `  <wpt lat="${coords.lat.toFixed(6)}" lon="${coords.lon.toFixed(6)}">\n` +
+          `    <name>${label}</name>\n` +
+          `    <desc>${addr.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</desc>\n` +
+          `    <sym>Hotel</sym>\n` +
+          `  </wpt>`
+        )
+      }
+
+      if (!waypoints.length) {
+        alert('No geocodable stops found. Make sure your days have end locations set.')
+        return
+      }
+
+      const gpx = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<gpx version="1.1" creator="WanderWisely" xmlns="http://www.topografix.com/GPX/1/1">',
+        `  <metadata><name>${trip.name.replace(/&/g, '&amp;')}</name></metadata>`,
+        ...waypoints,
+        '</gpx>',
+      ].join('\n')
+
+      const blob = new Blob([gpx], { type: 'application/gpx+xml' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${trip.name.replace(/[^a-z0-9]/gi, '_')}_garmin.gpx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setExportingGpx(false)
+    }
+  }
+
+  // ── Export addresses ────────────────────────────────────────────────────────
+
+  async function exportAddresses() {
+    if (!trip || !tripId) return
+    setExporting(true)
+    try {
+      // Fetch all data for the trip
+      const [daysRes, reservationsRes] = await Promise.all([
+        supabase.from('days').select('*').eq('trip_id', tripId).order('day_number'),
+        supabase.from('reservations').select('*').eq('trip_id', tripId).order('date', { nullsFirst: false }),
+      ])
+
+      const days: Day[] = daysRes.data ?? []
+      const dayIds = days.map((d) => d.id)
+
+      const [lodgingRes, activitiesRes] = dayIds.length
+        ? await Promise.all([
+            supabase.from('lodging').select('*').in('day_id', dayIds),
+            supabase.from('activities').select('*').in('day_id', dayIds).order('sort_order').order('time'),
+          ])
+        : [{ data: [] }, { data: [] }]
+
+      const allLodging: Lodging[] = lodgingRes.data ?? []
+      const allActivities: Activity[] = activitiesRes.data ?? []
+      const reservations: Reservation[] = reservationsRes.data ?? []
+
+      const mapsUrl = (addr: string) =>
+        `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`
+
+      const lines: string[] = []
+      const divider = '═'.repeat(48)
+
+      lines.push(`WanderWisely — ${trip.name}`)
+      if (trip.start_date && trip.end_date) {
+        const s = new Date(trip.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+        const e = new Date(trip.end_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+        lines.push(`${s} – ${e}`)
+      }
+      lines.push(`Exported: ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`)
+      lines.push('')
+      lines.push(divider)
+      lines.push('DAILY ROUTE & ADDRESSES')
+      lines.push(divider)
+
+      for (const day of days) {
+        const dateStr = day.date
+          ? new Date(day.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+          : 'Date TBD'
+        lines.push('')
+        lines.push(`DAY ${day.day_number} — ${dateStr}`)
+
+        if (day.start_location) {
+          lines.push(`  FROM: ${day.start_location}`)
+          lines.push(`  Maps: ${mapsUrl(day.start_location)}`)
+        }
+        if (day.end_location) {
+          lines.push(`  TO:   ${day.end_location}`)
+          lines.push(`  Maps: ${mapsUrl(day.end_location)}`)
+        }
+        if (day.drive_hours || day.drive_miles) {
+          const parts = []
+          if (day.drive_hours) parts.push(`${day.drive_hours} hrs`)
+          if (day.drive_miles) parts.push(`${day.drive_miles} mi`)
+          lines.push(`  Drive: ${parts.join(' · ')}`)
+        }
+        if (day.departure_time) {
+          lines.push(`  Depart: ${day.departure_time.slice(0, 5)}`)
+        }
+
+        // Lodging
+        const lodging = allLodging.find((l) => l.day_id === day.id)
+        if (lodging) {
+          lines.push('')
+          lines.push(`  🏨 LODGING: ${lodging.name ?? 'Hotel'}`)
+          if (lodging.type) lines.push(`     Type: ${lodging.type}${lodging.room_type ? ` · ${lodging.room_type}` : ''}`)
+          if (lodging.address) {
+            lines.push(`     Address: ${lodging.address}`)
+            lines.push(`     Maps: ${mapsUrl(lodging.address)}`)
+          }
+          if (lodging.check_in_time || lodging.check_out_time) {
+            lines.push(`     Check-in: ${lodging.check_in_time ?? '—'}  Check-out: ${lodging.check_out_time ?? '—'}`)
+          }
+          if (lodging.confirmation_number) lines.push(`     Confirmation: #${lodging.confirmation_number}`)
+        }
+
+        // Meals
+        const dayActivities = allActivities.filter((a) => a.day_id === day.id)
+        const SLOT_ORDER: Record<string, number> = { breakfast: 0, lunch: 1, dinner: 2, snack: 3 }
+        const meals = dayActivities
+          .filter((a) => a.type === 'meal' && a.name)
+          .sort((a, b) => (SLOT_ORDER[a.meal_slot ?? ''] ?? 99) - (SLOT_ORDER[b.meal_slot ?? ''] ?? 99))
+        if (meals.length > 0) {
+          lines.push('')
+          lines.push('  🍽️  MEALS:')
+          for (const meal of meals) {
+            const slot = meal.meal_slot ? meal.meal_slot.charAt(0).toUpperCase() + meal.meal_slot.slice(1) : 'Meal'
+            lines.push(`     ${slot}: ${meal.name}`)
+            if (meal.address) {
+              lines.push(`       Address: ${meal.address}`)
+              lines.push(`       Maps: ${mapsUrl(meal.address)}`)
+            }
+            if (meal.time) lines.push(`       Time: ${meal.time.slice(0, 5)}`)
+          }
+        }
+
+        // Activities / plans
+        const plans = dayActivities.filter((a) => a.type !== 'meal' && a.name)
+        if (plans.length > 0) {
+          lines.push('')
+          lines.push('  🎯 ACTIVITIES:')
+          for (const a of plans) {
+            const typeLabel = a.type === 'main' ? 'Main' : a.type === 'side_quest' ? 'Side quest' : a.type ?? 'Activity'
+            lines.push(`     [${typeLabel}] ${a.name}`)
+            if (a.address) {
+              lines.push(`       Address: ${a.address}`)
+              lines.push(`       Maps: ${mapsUrl(a.address)}`)
+            }
+            if (a.time) lines.push(`       Time: ${a.time.slice(0, 5)}`)
+            if (a.confirmation_number) lines.push(`       Confirmation: #${a.confirmation_number}`)
+          }
+        }
+
+        lines.push('')
+      }
+
+      // Reservations with addresses
+      const resWithAddr = reservations.filter((r) => r.address)
+      if (resWithAddr.length > 0) {
+        lines.push(divider)
+        lines.push('WALLET — ALL RESERVATION ADDRESSES')
+        lines.push(divider)
+        lines.push('')
+        for (const r of resWithAddr) {
+          const dateStr = r.date
+            ? new Date(r.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : null
+          lines.push(`${r.type?.toUpperCase() ?? 'OTHER'}: ${r.title || r.provider || '—'}${dateStr ? ` (${dateStr})` : ''}`)
+          lines.push(`  Address: ${r.address}`)
+          lines.push(`  Maps: ${mapsUrl(r.address!)}`)
+          if (r.confirmation_number) lines.push(`  Confirmation: #${r.confirmation_number}`)
+          lines.push('')
+        }
+      }
+
+      // Download
+      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${trip.name.replace(/[^a-z0-9]/gi, '_')}_addresses.txt`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   useEffect(() => {
     if (!trip) return
@@ -241,6 +657,138 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* ── Sync from Wallet ── */}
+        {trip && (
+          <div className="card">
+            <p className="section-label">Sync from Wallet</p>
+            <p className="text-sm text-forest/60 mb-3">
+              Auto-fill blank day locations and add reservations as activities using your uploaded
+              reservations. Only fills empty fields — nothing you've entered will be overwritten.
+            </p>
+
+            {syncApplied && (
+              <p className="text-sm text-sage text-center mb-2">✓ Changes applied!</p>
+            )}
+
+            {syncPreview === null ? (
+              <button
+                onClick={handleBuildPreview}
+                disabled={buildingPreview}
+                className="btn-secondary w-full text-sm flex items-center justify-center gap-2"
+              >
+                {buildingPreview ? (
+                  <><span className="animate-pulse">⏳</span><span>Building preview…</span></>
+                ) : (
+                  <><span>🔄</span><span>Preview changes</span></>
+                )}
+              </button>
+            ) : syncPreview.length === 0 ? (
+              <div className="space-y-3">
+                <div className="bg-sage/10 rounded-lg px-3 py-3 text-sm text-forest/70 text-center">
+                  Everything is already up to date — no changes needed.
+                </div>
+                <button
+                  onClick={() => setSyncPreview(null)}
+                  className="btn-secondary w-full text-sm"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-forest/50">
+                  {syncPreview.length} day{syncPreview.length !== 1 ? 's' : ''} will be updated:
+                </p>
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {syncPreview.map((dc) => (
+                    <div key={dc.dayId} className="bg-cream rounded-lg p-3">
+                      <p className="text-xs font-semibold text-forest mb-1.5">
+                        Day {dc.dayNumber}{dc.date ? ` · ${fmtDay(dc.date)}` : ''}
+                      </p>
+                      {dc.locationChanges.map((lc, i) => (
+                        <p key={i} className="text-xs text-forest/70 mb-1 leading-relaxed">
+                          <span className="font-medium text-forest/80">
+                            {lc.field === 'start_location' ? 'From' : 'To'}:
+                          </span>{' '}
+                          <span className="text-sage font-medium">{lc.proposed}</span>
+                          <span className="text-forest/40"> — from {lc.source}</span>
+                        </p>
+                      ))}
+                      {dc.newActivities.map((act, i) => (
+                        <p key={i} className="text-xs text-forest/70 mb-1 leading-relaxed">
+                          <span className="font-medium text-forest/80">+ Activity:</span>{' '}
+                          <span className="text-sage font-medium">{act.name}</span>
+                          {act.time && (
+                            <span className="text-forest/40"> at {act.time.slice(0, 5)}</span>
+                          )}
+                        </p>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSyncPreview(null)}
+                    disabled={syncing}
+                    className="btn-secondary flex-1 text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => applySyncPlan(syncPreview)}
+                    disabled={syncing}
+                    className="btn-primary flex-1 text-sm"
+                  >
+                    {syncing ? 'Applying…' : 'Apply changes'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Export ── */}
+        {trip && (
+          <div className="card">
+            <p className="section-label">Export</p>
+
+            {/* Address text file */}
+            <p className="text-sm text-forest/60 mb-2">
+              Download all addresses as a plain-text file organized by day with Google Maps links.
+            </p>
+            <button
+              onClick={exportAddresses}
+              disabled={exporting}
+              className="btn-secondary w-full text-sm flex items-center justify-center gap-2 mb-4"
+            >
+              {exporting ? (
+                <><span className="animate-pulse">⏳</span><span>Gathering addresses…</span></>
+              ) : (
+                <><span>📍</span><span>Export addresses (.txt)</span></>
+              )}
+            </button>
+
+            {/* Garmin GPX */}
+            <p className="text-sm text-forest/60 mb-1">
+              Export all daily stops as a GPX waypoints file for your Garmin GPS.
+            </p>
+            <p className="text-xs text-forest/40 mb-2">
+              Import via USB: connect your Garmin, copy the .gpx file to the <span className="font-mono">GPX</span> folder, then eject. Your stops will appear under Saved Places. The geocoding takes ~1 second per stop.
+            </p>
+            <button
+              onClick={exportGarminGpx}
+              disabled={exportingGpx}
+              className="btn-secondary w-full text-sm flex items-center justify-center gap-2"
+            >
+              {exportingGpx ? (
+                <><span className="animate-pulse">⏳</span><span>Geocoding stops…</span></>
+              ) : (
+                <><span>🧭</span><span>Export for Garmin (.gpx)</span></>
+              )}
+            </button>
+          </div>
+        )}
 
         {/* ── Guest Sharing ── */}
         <div className="card">
