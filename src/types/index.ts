@@ -80,6 +80,7 @@ export interface Reservation {
   raw_email_text: string | null // owner-only
   cost: number | null           // owner-only
   pdf_url: string | null        // owner-only
+  listing_url: string | null    // owner-only: link to Airbnb/hotel listing
   paid?: boolean                // owner-only: marks whether this reservation has been paid (migration 003)
 }
 

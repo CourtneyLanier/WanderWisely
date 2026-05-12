@@ -56,13 +56,14 @@ interface FormState {
   date: string
   time: string
   address: string
+  listing_url: string
   cost: string
   details: Json
 }
 
 const EMPTY_FORM: FormState = {
   type: 'other', title: '', provider: '', confirmation_number: '',
-  date: '', time: '', address: '', cost: '', details: {},
+  date: '', time: '', address: '', listing_url: '', cost: '', details: {},
 }
 
 // ── ReservationCard ────────────────────────────────────────────────────────────
@@ -113,6 +114,16 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
               className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors"
             >
               📄 View PDF
+            </a>
+          )}
+          {res.listing_url && (
+            <a
+              href={res.listing_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors"
+            >
+              🔗 View listing
             </a>
           )}
         </div>
@@ -244,6 +255,11 @@ function ReservationForm({
           <label className="block text-sm text-forest mb-1">Address</label>
           <input type="text" value={f.address} onChange={set('address')}
             placeholder="123 Main St, City, ST" className="input" />
+        </div>
+        <div className="col-span-2">
+          <label className="block text-sm text-forest mb-1">Listing URL</label>
+          <input type="url" value={f.listing_url} onChange={set('listing_url')}
+            placeholder="https://airbnb.com/rooms/… or hotel site" className="input" />
         </div>
         <div className="col-span-2">
           <label className="block text-sm text-forest mb-1">Cost ($)</label>
@@ -591,6 +607,7 @@ export default function WalletPage() {
         date: form.date || null,
         time: form.time || null,
         address: form.address || null,
+        listing_url: form.listing_url || null,
         cost: form.cost ? parseFloat(form.cost) : null,
         details: form.details,
         raw_email_text: rawEmail ?? null,
