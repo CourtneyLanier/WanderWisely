@@ -514,14 +514,19 @@ function HotelCard({
     },
   })
 
-  // One-time cleanup: remove auto-generated "Paid: X" spending_log entries (legacy double-count)
+  // Cleanup: remove ALL auto-generated hotel log entries — paid flag on reservations is source of truth
   const recalcMutation = useMutation({
     mutationFn: async () => {
+      // Delete anything that looks auto-generated: "Paid: X" prefix OR label matching a known hotel name
+      const hotelNames = hotelReservations.map((r) => r.title || r.provider || '').filter(Boolean)
       const { error } = await supabase.from('spending_log')
         .delete()
         .eq('trip_id', tripId)
         .eq('card', 'hotel')
-        .like('label', 'Paid: %')
+        .or([
+          'label.like.Paid: %',
+          ...hotelNames.map((n) => `label.eq.${n}`),
+        ].join(','))
       if (error) throw error
     },
     onSuccess: () => {
