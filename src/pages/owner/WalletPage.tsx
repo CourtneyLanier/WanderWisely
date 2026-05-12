@@ -138,8 +138,11 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
 
   return (
     <div className="card">
-      {/* Main row */}
-      <div className="flex items-start gap-3">
+      {/* Main row — tappable anywhere to expand/collapse */}
+      <div
+        className="flex items-start gap-3 cursor-pointer"
+        onClick={() => setExpanded((v) => !v)}
+      >
         <span className="text-2xl mt-0.5 shrink-0">{TYPE_ICONS[res.type ?? 'other']}</span>
         <div className="flex-1 min-w-0">
           <p className="font-medium text-forest leading-snug truncate">
@@ -152,7 +155,7 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
           </div>
           {res.confirmation_number && (
             <button
-              onClick={copyConf}
+              onClick={(e) => { e.stopPropagation(); copyConf() }}
               className="mt-1.5 flex items-center gap-1.5 text-xs font-mono text-deep-teal bg-deep-teal/8 hover:bg-deep-teal/15 rounded px-2 py-0.5 transition-colors"
             >
               <span>{copied ? '✓ Copied!' : res.confirmation_number}</span>
@@ -161,31 +164,29 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
           )}
           {res.pdf_url && (
             <a href={res.pdf_url} target="_blank" rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors">
               📄 View PDF
             </a>
           )}
           {res.listing_url && (
             <a href={res.listing_url} target="_blank" rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors">
               🔗 View listing
             </a>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={() => setEditing(true)}
-            className="text-xs text-sage hover:text-forest transition-colors"
+            className="text-xs text-sage hover:text-forest transition-colors px-2 py-1"
           >
             Edit
           </button>
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="text-forest/30 hover:text-forest transition-colors text-sm mt-0.5 px-1"
-            aria-label={expanded ? 'Collapse' : 'Expand'}
-          >
+          <span className="text-forest/30 text-sm mt-0.5 px-1 select-none">
             {expanded ? '▲' : '▼'}
-          </button>
+          </span>
         </div>
       </div>
 
