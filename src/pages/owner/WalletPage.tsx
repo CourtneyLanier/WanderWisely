@@ -105,6 +105,16 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
               {!copied && <span className="text-deep-teal/50">⎘</span>}
             </button>
           )}
+          {res.pdf_url && (
+            <a
+              href={res.pdf_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors"
+            >
+              📄 View PDF
+            </a>
+          )}
         </div>
         <button
           onClick={() => setExpanded((v) => !v)}
@@ -310,6 +320,7 @@ function ParseEmailFlow({
         date: s('date'),
         time: s('time'),
         address: s('address'),
+        cost: json.cost != null ? String(json.cost) : '',
         details: (json.details ?? {}) as Json,
       })
       setStep('review')
@@ -462,6 +473,7 @@ function UploadPdfFlow({
         date: s('date'),
         time: s('time'),
         address: s('address'),
+        cost: json.cost != null ? String(json.cost) : '',
         details: (json.details ?? {}) as Json,
       })
       setStep('review')

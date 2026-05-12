@@ -49,6 +49,53 @@ export default function DaysPage() {
     enabled: !!tripId,
   })
 
+  const autoFillAllMutation = useMutation({
+    mutationFn: async () => {
+      if (!tripId) throw new Error('No trip')
+      // Fetch all reservations with addresses for this trip
+      const { data: resList } = await supabase
+        .from('reservations').select('date, type, address')
+        .eq('trip_id', tripId).not('address', 'is', null)
+      const reservations = (resList ?? []) as { date: string | null; type: string; address: string }[]
+
+      // Build a map: date -> { hotel address, any address }
+      const byDate: Record<string, { hotel?: string; any?: string }> = {}
+      for (const r of reservations) {
+        if (!r.date) continue
+        if (!byDate[r.date]) byDate[r.date] = {}
+        if (r.type === 'hotel' && !byDate[r.date].hotel) byDate[r.date].hotel = r.address
+        if (!byDate[r.date].any) byDate[r.date].any = r.address
+      }
+
+      // Process days in order, chaining end → next start
+      const sorted = [...days].sort((a, b) => a.day_number - b.day_number)
+      let prevEnd: string | null = null
+
+      for (const day of sorted) {
+        const needsStart = !day.start_location
+        const needsEnd = !day.end_location
+        if (!needsStart && !needsEnd) { prevEnd = day.end_location; continue }
+
+        const dateEntry = day.date ? byDate[day.date] : undefined
+        const suggestedEnd = dateEntry?.hotel ?? dateEntry?.any ?? null
+        const suggestedStart = prevEnd
+
+        const updates: Record<string, string | null> = {}
+        if (needsStart && suggestedStart) updates.start_location = suggestedStart
+        if (needsEnd && suggestedEnd) updates.end_location = suggestedEnd
+
+        if (Object.keys(updates).length > 0) {
+          await supabase.from('days').update(updates).eq('id', day.id)
+        }
+
+        prevEnd = updates.end_location ?? day.end_location ?? null
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['days', tripId] })
+    },
+  })
+
   const addDayMutation = useMutation({
     mutationFn: async () => {
       if (!tripId) throw new Error('No trip')
@@ -104,13 +151,25 @@ export default function DaysPage() {
     <div className="p-4 pt-6">
       <div className="flex items-center justify-between mb-4">
         <h1 className="font-display text-2xl text-forest">Day by Day</h1>
-        <button
-          onClick={() => addDayMutation.mutate()}
-          disabled={addDayMutation.isPending}
-          className="btn-primary text-sm px-3 py-1.5"
-        >
-          {addDayMutation.isPending ? '…' : '+ Add Day'}
-        </button>
+        <div className="flex items-center gap-2">
+          {days.length > 0 && (
+            <button
+              onClick={() => autoFillAllMutation.mutate()}
+              disabled={autoFillAllMutation.isPending}
+              className="text-xs text-deep-teal hover:text-forest transition-colors"
+              title="Fill missing routes from your reservations"
+            >
+              {autoFillAllMutation.isPending ? '…' : '✨ Auto-fill'}
+            </button>
+          )}
+          <button
+            onClick={() => addDayMutation.mutate()}
+            disabled={addDayMutation.isPending}
+            className="btn-primary text-sm px-3 py-1.5"
+          >
+            {addDayMutation.isPending ? '…' : '+ Add Day'}
+          </button>
+        </div>
       </div>
 
       {addDayMutation.isError && (

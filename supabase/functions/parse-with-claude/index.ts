@@ -28,9 +28,11 @@ Return this exact structure:
   "date": "YYYY-MM-DD",
   "time": "HH:MM",
   "address": "string",
+  "cost": number,
   "details": {}
 }
 
+cost: the total amount charged or due (as a number, no currency symbol). Use null if not found.
 Put any extra useful fields (seat numbers, terminal, baggage, check-in instructions, etc.) inside "details" as key-value pairs.
 If a field cannot be determined, use null.`
 
