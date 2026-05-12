@@ -381,6 +381,7 @@ function ParseEmailFlow({
         time: s('time'),
         address: s('address'),
         cost: json.cost != null ? String(json.cost) : '',
+        listing_url: s('listing_url'),
         details: (json.details ?? {}) as Json,
       })
       setStep('review')
@@ -534,6 +535,7 @@ function UploadPdfFlow({
         time: s('time'),
         address: s('address'),
         cost: json.cost != null ? String(json.cost) : '',
+        listing_url: s('listing_url'),
         details: (json.details ?? {}) as Json,
       })
       setStep('review')

@@ -29,11 +29,25 @@ Return this exact structure:
   "time": "HH:MM",
   "address": "string",
   "cost": number,
+  "listing_url": "string",
   "details": {}
 }
 
 cost: the total amount charged or due (as a number, no currency symbol). Use null if not found.
-Put any extra useful fields (seat numbers, terminal, baggage, check-in instructions, etc.) inside "details" as key-value pairs.
+listing_url: for hotels/lodging, the URL to the property listing on Airbnb, VRBO, Booking.com, Hotels.com, etc. Use null if not found.
+time: for hotels, this is the check-in time.
+
+For hotel/lodging reservations, extract these fields into "details" when available:
+  check_out_time: "HH:MM" (checkout time)
+  nightly_rate: number (per-night cost, no currency symbol)
+  room_type: "string" (e.g. "King Suite", "2BR Cabin", "Standard Room")
+  bedrooms: number
+  beds: number
+  bathrooms: number
+
+For flights, put seat number, terminal, gate, baggage allowance in "details".
+For car rentals, put pickup location, car class, insurance details in "details".
+Put any other extra useful fields in "details" as key-value pairs.
 If a field cannot be determined, use null.`
 
 const RECEIPT_SYSTEM = `You are a receipt parser. Extract spending information from the receipt image and return ONLY valid JSON with no preamble or markdown.

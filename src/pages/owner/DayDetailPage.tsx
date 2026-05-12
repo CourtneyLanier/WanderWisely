@@ -325,16 +325,52 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
       setF((prev) => ({ ...prev, [key]: e.target.value }))
   )
 
+  function fillFromReservation(r: Reservation) {
+    const det = (r.details && typeof r.details === 'object' && !Array.isArray(r.details))
+      ? r.details as Record<string, unknown>
+      : {}
+    const detStr = (k: string) => (det[k] != null ? String(det[k]) : '')
+    setF((prev) => ({
+      ...prev,
+      name: prev.name || (r.title || r.provider || ''),
+      address: prev.address || (r.address || ''),
+      listing_url: prev.listing_url || (r.listing_url || ''),
+      confirmation_number: prev.confirmation_number || (r.confirmation_number || ''),
+      check_in_time: prev.check_in_time || (r.time ? r.time.slice(0, 5) : ''),
+      check_out_time: prev.check_out_time || detStr('check_out_time'),
+      room_type: prev.room_type || detStr('room_type'),
+      nightly_rate: prev.nightly_rate || detStr('nightly_rate'),
+      total_cost: prev.total_cost || (r.cost != null ? String(r.cost) : ''),
+      bedrooms: prev.bedrooms || detStr('bedrooms'),
+      beds: prev.beds || detStr('beds'),
+      bathrooms: prev.bathrooms || detStr('bathrooms'),
+    }))
+    setEditing(true)
+  }
+
+  const canFillFromWallet = hotelReservations.length > 0
+
   return (
     <div className="mb-4">
       <div className="flex items-center justify-between mb-2">
         <p className="section-label mb-0">Lodging</p>
-        {!editing && (
-          <button onClick={() => setEditing(true)}
-            className="text-xs text-sage hover:text-forest transition-colors">
-            {lodging ? 'Edit' : '+ Add'}
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {!editing && canFillFromWallet && (
+            <button
+              onClick={() => fillFromReservation(hotelReservations[0])}
+              className="text-xs text-deep-teal hover:text-forest transition-colors"
+              title="Fill lodging form from your Wallet reservation"
+            >
+              ✨ Fill from Wallet
+            </button>
+          )}
+          {!editing && (
+            <button onClick={() => setEditing(true)}
+              className="text-xs text-sage hover:text-forest transition-colors">
+              {lodging ? 'Edit' : '+ Add'}
+            </button>
+          )}
+        </div>
       </div>
 
       {!editing && lodging && (
