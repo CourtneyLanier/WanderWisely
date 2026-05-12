@@ -69,7 +69,9 @@ const EMPTY_FORM: FormState = {
 // ── ReservationCard ────────────────────────────────────────────────────────────
 
 function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => void }) {
+  const queryClient = useQueryClient()
   const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [copied, setCopied] = useState(false)
 
   function copyConf() {
@@ -79,9 +81,60 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const editMutation = useMutation({
+    mutationFn: async (form: FormState) => {
+      const { error } = await supabase.from('reservations').update({
+        type: form.type,
+        title: form.title || null,
+        provider: form.provider || null,
+        confirmation_number: form.confirmation_number || null,
+        date: form.date || null,
+        time: form.time || null,
+        address: form.address || null,
+        listing_url: form.listing_url || null,
+        cost: form.cost ? parseFloat(form.cost) : null,
+        details: form.details,
+      }).eq('id', res.id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reservations'] })
+      setEditing(false)
+      setExpanded(false)
+    },
+  })
+
   const detailEntries = res.details && typeof res.details === 'object' && !Array.isArray(res.details)
     ? Object.entries(res.details as Record<string, Json>).filter(([, v]) => v != null)
     : []
+
+  if (editing) {
+    return (
+      <div className="card">
+        <ReservationForm
+          title="Edit reservation"
+          initial={{
+            type: res.type ?? 'other',
+            title: res.title ?? '',
+            provider: res.provider ?? '',
+            confirmation_number: res.confirmation_number ?? '',
+            date: res.date ?? '',
+            time: res.time ?? '',
+            address: res.address ?? '',
+            listing_url: res.listing_url ?? '',
+            cost: res.cost != null ? String(res.cost) : '',
+            details: res.details ?? {},
+          }}
+          onSave={(form) => editMutation.mutate(form)}
+          onCancel={() => setEditing(false)}
+          saving={editMutation.isPending}
+        />
+        {editMutation.isError && (
+          <p className="text-xs text-terracotta mt-2">{(editMutation.error as Error).message}</p>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="card">
@@ -107,33 +160,33 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
             </button>
           )}
           {res.pdf_url && (
-            <a
-              href={res.pdf_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors"
-            >
+            <a href={res.pdf_url} target="_blank" rel="noopener noreferrer"
+              className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors">
               📄 View PDF
             </a>
           )}
           {res.listing_url && (
-            <a
-              href={res.listing_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors"
-            >
+            <a href={res.listing_url} target="_blank" rel="noopener noreferrer"
+              className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors">
               🔗 View listing
             </a>
           )}
         </div>
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="text-forest/30 hover:text-forest transition-colors text-sm mt-0.5 shrink-0 px-1"
-          aria-label={expanded ? 'Collapse' : 'Expand'}
-        >
-          {expanded ? '▲' : '▼'}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setEditing(true)}
+            className="text-xs text-sage hover:text-forest transition-colors"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="text-forest/30 hover:text-forest transition-colors text-sm mt-0.5 px-1"
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+          >
+            {expanded ? '▲' : '▼'}
+          </button>
+        </div>
       </div>
 
       {/* Expanded details */}
@@ -142,12 +195,9 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
           {res.address && (
             <div>
               <span className="text-xs text-forest/40 uppercase tracking-wide">Address</span>
-              <a
-                href={`https://maps.google.com/?q=${encodeURIComponent(res.address)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-deep-teal underline mt-0.5 block"
-              >
+              <a href={`https://maps.google.com/?q=${encodeURIComponent(res.address)}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-sm text-deep-teal underline mt-0.5 block">
                 {res.address}
               </a>
             </div>
@@ -174,19 +224,13 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
             </div>
           )}
           {res.pdf_url && (
-            <a
-              href={res.pdf_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-deep-teal underline"
-            >
+            <a href={res.pdf_url} target="_blank" rel="noopener noreferrer"
+              className="text-xs text-deep-teal underline">
               📄 View confirmation PDF
             </a>
           )}
-          <button
-            onClick={onDelete}
-            className="text-xs text-terracotta hover:text-forest transition-colors pt-1"
-          >
+          <button onClick={onDelete}
+            className="text-xs text-terracotta hover:text-forest transition-colors pt-1">
             Delete reservation
           </button>
         </div>
