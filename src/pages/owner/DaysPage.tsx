@@ -80,7 +80,7 @@ export default function DaysPage() {
         const suggestedEnd = dateEntry?.hotel ?? dateEntry?.any ?? null
         const suggestedStart = prevEnd
 
-        const updates: Record<string, string | null> = {}
+        const updates: { start_location?: string; end_location?: string } = {}
         if (needsStart && suggestedStart) updates.start_location = suggestedStart
         if (needsEnd && suggestedEnd) updates.end_location = suggestedEnd
 
