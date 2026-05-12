@@ -81,6 +81,21 @@ function DayHeader({ day }: { day: Day }) {
 
   const canAutoFill = !!day.date && (dayReservations.length > 0 || !!prevDay?.end_location || !!prevDayHotel?.address)
 
+  // Auto-fill when edit form opens and fields are empty
+  useEffect(() => {
+    if (!editing || !canAutoFill) return
+    if (!startLoc) {
+      const suggested = prevDay?.end_location || prevDayHotel?.address || ''
+      if (suggested) setStartLoc(suggested)
+    }
+    if (!endLoc) {
+      const hotelAddr = dayReservations.find((r) => r.type === 'hotel')?.address
+      const anyAddr = dayReservations[0]?.address
+      const suggested = hotelAddr || anyAddr || ''
+      if (suggested) setEndLoc(suggested)
+    }
+  }, [editing])
+
   useEffect(() => {
     setStartLoc(day.start_location ?? '')
     setEndLoc(day.end_location ?? '')
