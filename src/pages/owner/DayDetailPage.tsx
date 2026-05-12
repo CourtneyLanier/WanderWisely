@@ -18,6 +18,7 @@ function fmt(dateStr: string | null) {
 
 function DayHeader({ day }: { day: Day }) {
   const queryClient = useQueryClient()
+  const tripId = useAppStore((s) => s.tripId)
   const [editing, setEditing] = useState(false)
   const [startLoc, setStartLoc] = useState(day.start_location ?? '')
   const [endLoc, setEndLoc] = useState(day.end_location ?? '')
@@ -26,6 +27,59 @@ function DayHeader({ day }: { day: Day }) {
   const [notes, setNotes] = useState(day.notes ?? '')
   const [date, setDate] = useState(day.date ?? '')
   const [departureTime, setDepartureTime] = useState(day.departure_time ?? '')
+
+  // ── Auto-fill queries ──
+  const { data: dayReservations = [] } = useQuery({
+    queryKey: ['reservations-autofill', tripId, day.date],
+    queryFn: async () => {
+      if (!tripId || !day.date) return []
+      const { data } = await supabase
+        .from('reservations').select('type, address')
+        .eq('trip_id', tripId).eq('date', day.date)
+        .not('address', 'is', null)
+      return (data ?? []) as { type: string; address: string }[]
+    },
+    enabled: !!tripId && !!day.date,
+  })
+
+  const { data: prevDay } = useQuery({
+    queryKey: ['prev-day-autofill', tripId, day.day_number],
+    queryFn: async () => {
+      if (!tripId || day.day_number <= 1) return null
+      const { data } = await supabase
+        .from('days').select('end_location, date')
+        .eq('trip_id', tripId).eq('day_number', day.day_number - 1)
+        .maybeSingle()
+      return data as { end_location: string | null; date: string | null } | null
+    },
+    enabled: !!tripId && day.day_number > 1,
+  })
+
+  const { data: prevDayHotel } = useQuery({
+    queryKey: ['prev-day-hotel-autofill', tripId, prevDay?.date],
+    queryFn: async () => {
+      if (!tripId || !prevDay?.date) return null
+      const { data } = await supabase
+        .from('reservations').select('address')
+        .eq('trip_id', tripId).eq('date', prevDay.date).eq('type', 'hotel')
+        .not('address', 'is', null)
+        .maybeSingle()
+      return data as { address: string } | null
+    },
+    enabled: !!tripId && !!prevDay?.date && !prevDay?.end_location,
+  })
+
+  function autoFill() {
+    const suggestedStart = prevDay?.end_location || prevDayHotel?.address || ''
+    const hotelAddr = dayReservations.find((r) => r.type === 'hotel')?.address
+    const anyAddr = dayReservations[0]?.address
+    const suggestedEnd = hotelAddr || anyAddr || ''
+    if (suggestedStart && !startLoc) setStartLoc(suggestedStart)
+    if (suggestedEnd && !endLoc) setEndLoc(suggestedEnd)
+    setEditing(true)
+  }
+
+  const canAutoFill = !!day.date && (dayReservations.length > 0 || !!prevDay?.end_location || !!prevDayHotel?.address)
 
   useEffect(() => {
     setStartLoc(day.start_location ?? '')
@@ -86,12 +140,23 @@ function DayHeader({ day }: { day: Day }) {
             <p className="text-xs text-forest/60 mt-1 italic">{day.notes}</p>
           )}
         </div>
-        <button
-          onClick={() => setEditing((v) => !v)}
-          className="text-xs text-sage hover:text-forest transition-colors ml-2"
-        >
-          {editing ? 'Cancel' : 'Edit'}
-        </button>
+        <div className="flex items-center gap-3 ml-2">
+          {!editing && canAutoFill && (!day.start_location || !day.end_location) && (
+            <button
+              onClick={autoFill}
+              className="text-xs text-deep-teal hover:text-forest transition-colors"
+              title="Fill locations from your reservations"
+            >
+              ✨ Auto-fill
+            </button>
+          )}
+          <button
+            onClick={() => setEditing((v) => !v)}
+            className="text-xs text-sage hover:text-forest transition-colors"
+          >
+            {editing ? 'Cancel' : 'Edit'}
+          </button>
+        </div>
       </div>
 
       {editing && (
