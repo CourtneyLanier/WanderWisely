@@ -494,21 +494,18 @@ function HotelCard({
 
   // Toggle paid status on a reservation
   const togglePaidMutation = useMutation({
-    mutationFn: async ({ id, paid, cost, label }: { id: string; paid: boolean; cost: number | null; label: string }) => {
-      // Update the reservation paid flag
+    mutationFn: async ({ id, paid, label }: { id: string; paid: boolean; cost: number | null; label: string }) => {
+      // Update the reservation paid flag only — spending_log is for manual deposits only
       const { error } = await supabase.from('reservations').update({ paid }).eq('id', id)
       if (error) throw error
 
-      // If marking paid and cost is known, also log it so Budget totals include it
-      if (paid && cost != null && cost > 0) {
-        const { error: logErr } = await supabase.from('spending_log').insert({
-          trip_id: tripId,
-          card: 'hotel',
-          amount: cost,
-          label: `Paid: ${label}`,
-          entry_type: 'per_meal',
-        })
-        if (logErr) throw logErr
+      // If undoing, also clean up any legacy auto-generated "Paid: X" log entries
+      if (!paid) {
+        await supabase.from('spending_log')
+          .delete()
+          .eq('trip_id', tripId)
+          .eq('card', 'hotel')
+          .eq('label', `Paid: ${label}`)
       }
     },
     onSuccess: () => {
@@ -516,6 +513,23 @@ function HotelCard({
       queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] })
     },
   })
+
+  // One-time cleanup: remove auto-generated "Paid: X" spending_log entries (legacy double-count)
+  const recalcMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from('spending_log')
+        .delete()
+        .eq('trip_id', tripId)
+        .eq('card', 'hotel')
+        .like('label', 'Paid: %')
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] })
+    },
+  })
+
+  const hasLegacyEntries = hotelLogs.some((l) => l.label?.startsWith('Paid: '))
 
   const addMutation = useMutation({
     mutationFn: async () => {
@@ -681,9 +695,20 @@ function HotelCard({
       )}
 
       {!adding && (
-        <button onClick={() => setAdding(true)} className="btn-secondary w-full text-xs py-2">
-          + Log partial payment / deposit
-        </button>
+        <div className="space-y-2">
+          <button onClick={() => setAdding(true)} className="btn-secondary w-full text-xs py-2">
+            + Log partial payment / deposit
+          </button>
+          {hasLegacyEntries && (
+            <button
+              onClick={() => recalcMutation.mutate()}
+              disabled={recalcMutation.isPending}
+              className="w-full text-xs py-2 rounded-lg border border-terracotta/30 text-terracotta hover:bg-terracotta/5 transition-colors"
+            >
+              {recalcMutation.isPending ? 'Fixing…' : '⚠️ Fix duplicate totals'}
+            </button>
+          )}
+        </div>
       )}
 
       {/* Manual payment history */}
