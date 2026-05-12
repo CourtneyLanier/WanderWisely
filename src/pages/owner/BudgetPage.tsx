@@ -529,8 +529,6 @@ function HotelCard({
     },
   })
 
-  const hasLegacyEntries = hotelLogs.some((l) => l.label?.startsWith('Paid: '))
-
   const addMutation = useMutation({
     mutationFn: async () => {
       const { error } = await supabase.from('spending_log').insert({
@@ -699,15 +697,13 @@ function HotelCard({
           <button onClick={() => setAdding(true)} className="btn-secondary w-full text-xs py-2">
             + Log partial payment / deposit
           </button>
-          {hasLegacyEntries && (
-            <button
-              onClick={() => recalcMutation.mutate()}
-              disabled={recalcMutation.isPending}
-              className="w-full text-xs py-2 rounded-lg border border-terracotta/30 text-terracotta hover:bg-terracotta/5 transition-colors"
-            >
-              {recalcMutation.isPending ? 'Fixing…' : '⚠️ Fix duplicate totals'}
-            </button>
-          )}
+          <button
+            onClick={() => recalcMutation.mutate()}
+            disabled={recalcMutation.isPending}
+            className="w-full text-xs py-2 rounded-lg border border-forest/15 text-forest/50 hover:bg-forest/5 transition-colors"
+          >
+            {recalcMutation.isPending ? 'Recalculating…' : '↻ Recalculate totals'}
+          </button>
         </div>
       )}
 
