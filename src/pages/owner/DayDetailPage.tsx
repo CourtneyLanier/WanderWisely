@@ -534,7 +534,7 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
             </div>
           )}
 
-          {/* Confirmation # + address row */}
+          {/* Confirmation # + address + pdf row */}
           <div className="flex flex-wrap items-center gap-2">
             {lodging.confirmation_number && (
               <button
@@ -545,14 +545,24 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
                 {!copiedConf && <span className="text-deep-teal/50">⎘</span>}
               </button>
             )}
-            {lodging.address && (
+            {(lodging.address || hotelReservations[0]?.address) && (
               <a
-                href={`https://maps.google.com/?q=${encodeURIComponent(lodging.address)}`}
+                href={`https://maps.google.com/?q=${encodeURIComponent(lodging.address || hotelReservations[0].address!)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs text-deep-teal hover:text-forest transition-colors"
               >
                 📍 Map
+              </a>
+            )}
+            {hotelReservations[0]?.pdf_url && (
+              <a
+                href={hotelReservations[0].pdf_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-deep-teal hover:text-forest transition-colors"
+              >
+                📄 PDF
               </a>
             )}
             {(lodging.nightly_rate || lodging.total_cost) && (
@@ -572,7 +582,7 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
         </div>
       )}
 
-      {!editing && hotelReservations.length > 0 && (
+      {!editing && !lodging && hotelReservations.length > 0 && (
         <div className="space-y-2 mt-2">
           {hotelReservations.map((r) => (
             <div key={r.id} className="card border-l-2 border-l-deep-teal/30">
