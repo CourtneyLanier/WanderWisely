@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
@@ -242,6 +242,69 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [f, setF] = useState(EMPTY_LODGING)
+  const [parsing, setParsing] = useState(false)
+  const [parseError, setParseError] = useState('')
+  const pdfInputRef = useRef<HTMLInputElement>(null)
+
+  async function parsePdf(file: File) {
+    setParsing(true)
+    setParseError('')
+    try {
+      const MAX_PDF_BYTES = 5 * 1024 * 1024
+      if (file.size > MAX_PDF_BYTES) {
+        throw new Error(`PDF is ${(file.size / 1024 / 1024).toFixed(1)} MB — please use a file under 5 MB.`)
+      }
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      const { data, error } = await supabase.functions.invoke('parse-with-claude', {
+        body: { mode: 'pdf', pdfBase64: base64 },
+      })
+      if (error) throw error
+      if (!data?.ok) throw new Error(data?.error ?? 'Unknown error')
+      const raw = data.text as string
+      const start = raw.indexOf('{')
+      const end = raw.lastIndexOf('}')
+      const json = start !== -1 && end !== -1 ? JSON.parse(raw.slice(start, end + 1)) : {}
+      const s = (k: string) => (typeof json[k] === 'string' ? json[k] as string : '')
+      const det = (json.details && typeof json.details === 'object' && !Array.isArray(json.details))
+        ? json.details as Record<string, unknown>
+        : {}
+      const detStr = (k: string) => (det[k] != null ? String(det[k]) : '')
+
+      // Detect lodging type from provider/title
+      const nameStr = (s('title') || s('provider')).toLowerCase()
+      const lodgingType = nameStr.includes('airbnb') ? 'airbnb'
+        : nameStr.includes('vrbo') || nameStr.includes('vacation rental') ? 'other'
+        : 'hotel'
+
+      setF((prev) => ({
+        ...prev,
+        name: s('title') || s('provider') || prev.name,
+        type: lodgingType as typeof prev.type,
+        address: s('address') || prev.address,
+        listing_url: s('listing_url') || prev.listing_url,
+        confirmation_number: s('confirmation_number') || prev.confirmation_number,
+        check_in_time: s('time') ? s('time').slice(0, 5) : prev.check_in_time,
+        check_out_time: detStr('check_out_time') || prev.check_out_time,
+        room_type: detStr('room_type') || prev.room_type,
+        nightly_rate: detStr('nightly_rate') || prev.nightly_rate,
+        total_cost: json.cost != null ? String(json.cost) : prev.total_cost,
+        bedrooms: detStr('bedrooms') || prev.bedrooms,
+        beds: detStr('beds') || prev.beds,
+        bathrooms: detStr('bathrooms') || prev.bathrooms,
+      }))
+      setEditing(true)
+    } catch (e) {
+      setParseError((e as Error).message ?? 'Failed to parse PDF')
+    } finally {
+      setParsing(false)
+      if (pdfInputRef.current) pdfInputRef.current.value = ''
+    }
+  }
 
   const { data: lodging } = useQuery({
     queryKey: ['lodging', dayId],
@@ -361,9 +424,29 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
               className="text-xs text-deep-teal hover:text-forest transition-colors"
               title="Fill lodging form from your Wallet reservation"
             >
-              ✨ Fill from Wallet
+              ✨ Wallet
             </button>
           )}
+          {!editing && (
+            <button
+              onClick={() => pdfInputRef.current?.click()}
+              disabled={parsing}
+              className="text-xs text-deep-teal hover:text-forest transition-colors"
+              title="Parse a confirmation PDF to fill lodging details"
+            >
+              {parsing ? '✨ Parsing…' : '📄 PDF'}
+            </button>
+          )}
+          <input
+            ref={pdfInputRef}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) parsePdf(file)
+            }}
+          />
           {!editing && (
             <button onClick={() => setEditing(true)}
               className="text-xs text-sage hover:text-forest transition-colors">
@@ -372,6 +455,10 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
           )}
         </div>
       </div>
+
+      {parseError && (
+        <p className="text-xs text-terracotta mb-2">{parseError}</p>
+      )}
 
       {!editing && lodging && (
         <div className="card">
