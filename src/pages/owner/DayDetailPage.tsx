@@ -244,7 +244,14 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
   const [f, setF] = useState(EMPTY_LODGING)
   const [parsing, setParsing] = useState(false)
   const [parseError, setParseError] = useState('')
+  const [copiedConf, setCopiedConf] = useState(false)
   const pdfInputRef = useRef<HTMLInputElement>(null)
+
+  function copyConf(num: string) {
+    navigator.clipboard.writeText(num)
+    setCopiedConf(true)
+    setTimeout(() => setCopiedConf(false), 2000)
+  }
 
   async function parsePdf(file: File) {
     setParsing(true)
@@ -461,33 +468,99 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
       )}
 
       {!editing && lodging && (
-        <div className="card">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="font-medium text-forest">{lodging.name}</p>
-              <p className="text-xs text-forest/50 mt-0.5">
-                {lodging.type}{lodging.room_type ? ` · ${lodging.room_type}` : ''}
-              </p>
-              {(lodging.check_in_time || lodging.check_out_time) && (
-                <p className="text-xs text-forest/60 mt-1">
-                  In {lodging.check_in_time ?? '—'} · Out {lodging.check_out_time ?? '—'}
-                </p>
-              )}
-              {lodging.confirmation_number && (
-                <p className="text-xs text-forest/50 mt-0.5 font-mono">
-                  #{lodging.confirmation_number}
-                </p>
-              )}
-              {lodging.nightly_rate && (
-                <p className="text-xs text-gold mt-1 font-mono">
-                  ${lodging.nightly_rate}/night
-                  {lodging.total_cost ? ` · $${lodging.total_cost} total` : ''}
-                </p>
+        <div className="card space-y-3">
+          {/* Name + listing link */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-forest leading-snug">{lodging.name}</p>
+              {lodging.room_type && (
+                <p className="text-xs text-forest/60 mt-0.5">{lodging.room_type}</p>
               )}
             </div>
             {lodging.listing_url && (
-              <a href={lodging.listing_url} target="_blank" rel="noopener noreferrer"
-                className="text-xs text-sage underline ml-3">View</a>
+              <a
+                href={lodging.listing_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 text-xs font-medium text-white bg-deep-teal rounded-md px-2.5 py-1 hover:bg-forest transition-colors"
+              >
+                View listing ↗
+              </a>
+            )}
+          </div>
+
+          {/* Beds / Baths row */}
+          {(lodging.beds || lodging.bedrooms || lodging.bathrooms) && (
+            <div className="flex gap-2 flex-wrap">
+              {lodging.beds != null && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-forest bg-sage/15 rounded-full px-2.5 py-1">
+                  🛏 {lodging.beds} bed{lodging.beds !== 1 ? 's' : ''}
+                </span>
+              )}
+              {lodging.bedrooms != null && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-forest bg-sage/15 rounded-full px-2.5 py-1">
+                  🚪 {lodging.bedrooms} bedroom{lodging.bedrooms !== 1 ? 's' : ''}
+                </span>
+              )}
+              {lodging.bathrooms != null && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-forest bg-sage/15 rounded-full px-2.5 py-1">
+                  🚿 {lodging.bathrooms} bath{lodging.bathrooms !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Check-in / Check-out */}
+          {(lodging.check_in_time || lodging.check_out_time) && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-cream rounded-lg px-3 py-2 text-center">
+                <p className="text-[10px] uppercase tracking-wide text-forest/40 font-medium mb-0.5">Check-in</p>
+                <p className="text-sm font-semibold text-forest">
+                  {lodging.check_in_time ? (() => {
+                    const [h, m] = lodging.check_in_time!.split(':').map(Number)
+                    return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${h >= 12 ? 'PM' : 'AM'}`
+                  })() : '—'}
+                </p>
+              </div>
+              <div className="bg-cream rounded-lg px-3 py-2 text-center">
+                <p className="text-[10px] uppercase tracking-wide text-forest/40 font-medium mb-0.5">Check-out</p>
+                <p className="text-sm font-semibold text-forest">
+                  {lodging.check_out_time ? (() => {
+                    const [h, m] = lodging.check_out_time!.split(':').map(Number)
+                    return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${h >= 12 ? 'PM' : 'AM'}`
+                  })() : '—'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Confirmation # + address row */}
+          <div className="flex flex-wrap items-center gap-2">
+            {lodging.confirmation_number && (
+              <button
+                onClick={() => copyConf(lodging.confirmation_number!)}
+                className="inline-flex items-center gap-1.5 text-xs font-mono text-deep-teal bg-deep-teal/8 hover:bg-deep-teal/15 rounded px-2 py-1 transition-colors"
+              >
+                {copiedConf ? '✓ Copied!' : `#${lodging.confirmation_number}`}
+                {!copiedConf && <span className="text-deep-teal/50">⎘</span>}
+              </button>
+            )}
+            {lodging.address && (
+              <a
+                href={`https://maps.google.com/?q=${encodeURIComponent(lodging.address)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-deep-teal hover:text-forest transition-colors"
+              >
+                📍 Map
+              </a>
+            )}
+            {(lodging.nightly_rate || lodging.total_cost) && (
+              <span className="text-xs text-gold font-mono ml-auto">
+                {lodging.nightly_rate ? `$${lodging.nightly_rate}/night` : ''}
+                {lodging.nightly_rate && lodging.total_cost ? ' · ' : ''}
+                {lodging.total_cost ? `$${lodging.total_cost} total` : ''}
+              </span>
             )}
           </div>
         </div>

@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import RequireAuth from '@/components/auth/RequireAuth'
 import OwnerLayout from '@/components/layout/OwnerLayout'
 import LoginPage from '@/pages/auth/LoginPage'
@@ -17,6 +18,30 @@ import GuestDaysPage from '@/pages/guest/GuestDaysPage'
 import GuestWalletPage from '@/pages/guest/GuestWalletPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import { useAppStore } from '@/store/useAppStore'
+import { supabase } from '@/lib/supabase'
+
+// Redirects to today's day detail if trip is active, else falls back to /days
+function TodayRedirect() {
+  const tripId = useAppStore((s) => s.tripId)
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!tripId) { navigate('/trips', { replace: true }); return }
+    const today = new Date().toISOString().split('T')[0]
+    supabase
+      .from('days').select('id').eq('trip_id', tripId).eq('date', today).maybeSingle()
+      .then(({ data }) => {
+        if (data?.id) navigate(`/days/${data.id}`, { replace: true })
+        else navigate('/days', { replace: true })
+      })
+  }, [tripId])
+
+  return (
+    <div className="p-4 flex justify-center py-20">
+      <p className="text-forest/40 text-sm">Loading…</p>
+    </div>
+  )
+}
 
 // If Supabase emails a link to the site root (redirect URL not in allowlist),
 // the token arrives in the hash or as ?code=. Forward it to the callback route
@@ -37,7 +62,7 @@ function RootRedirect() {
     return <Navigate to={`/auth/callback${suffix}`} replace />
   }
 
-  return <Navigate to={tripId ? '/overview' : '/trips'} replace />
+  return <Navigate to={tripId ? '/today' : '/trips'} replace />
 }
 
 export default function App() {
@@ -59,6 +84,7 @@ export default function App() {
           <Route element={<OwnerLayout />}>
             <Route path="/trips" element={<TripsPage />} />
             <Route path="/overview" element={<OverviewPage />} />
+            <Route path="/today" element={<TodayRedirect />} />
             <Route path="/days" element={<DaysPage />} />
             <Route path="/days/:dayId" element={<DayDetailPage />} />
             <Route path="/wallet" element={<WalletPage />} />

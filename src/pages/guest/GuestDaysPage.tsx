@@ -52,8 +52,8 @@ const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner']
 
 // ── DayCard ────────────────────────────────────────────────────────────────────
 
-function DayCard({ day, lodging, activities }: { day: GDay; lodging: GLodging | null; activities: GActivity[] }) {
-  const [expanded, setExpanded] = useState(false)
+function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lodging: GLodging | null; activities: GActivity[]; isToday?: boolean }) {
+  const [expanded, setExpanded] = useState(isToday)
 
   const meals = activities.filter((a) => a.type === 'meal')
   const plans = activities.filter((a) => a.type !== 'meal')
@@ -74,6 +74,11 @@ function DayCard({ day, lodging, activities }: { day: GDay; lodging: GLodging | 
               <span className="text-xs font-medium text-deep-teal bg-deep-teal/10 rounded px-1.5 py-0.5 shrink-0">
                 Day {day.day_number}
               </span>
+              {isToday && (
+                <span className="text-xs font-medium text-white bg-deep-teal rounded-full px-2 py-0.5 shrink-0">
+                  Today
+                </span>
+              )}
               {day.date && (
                 <span className="text-xs text-forest/50">{fmtDate(day.date)}</span>
               )}
@@ -107,30 +112,13 @@ function DayCard({ day, lodging, activities }: { day: GDay; lodging: GLodging | 
           {lodging && (
             <div>
               <p className="section-label mb-2">Lodging</p>
-              <div className="bg-cream rounded-lg p-3">
-                <div className="flex items-start justify-between gap-2">
+              <div className="bg-cream rounded-lg p-3 space-y-3">
+                {/* Name + listing link */}
+                <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-forest">{lodging.name}</p>
-                    <p className="text-xs text-forest/50 mt-0.5">
-                      {lodging.type}
-                      {lodging.room_type ? ` · ${lodging.room_type}` : ''}
-                    </p>
-                    {(lodging.beds || lodging.bedrooms || lodging.bathrooms) && (
-                      <p className="text-xs text-forest/50 mt-0.5">
-                        {[
-                          lodging.beds ? `${lodging.beds} bed${lodging.beds !== 1 ? 's' : ''}` : null,
-                          lodging.bedrooms ? `${lodging.bedrooms} BR` : null,
-                          lodging.bathrooms ? `${lodging.bathrooms} BA` : null,
-                        ].filter(Boolean).join(' · ')}
-                      </p>
-                    )}
-                    {(lodging.check_in_time || lodging.check_out_time) && (
-                      <p className="text-xs text-forest/60 mt-1">
-                        Check-in {fmtTime(lodging.check_in_time) ?? '—'} · Check-out {fmtTime(lodging.check_out_time) ?? '—'}
-                      </p>
-                    )}
-                    {lodging.address && (
-                      <p className="text-xs text-forest/50 mt-0.5">{lodging.address}</p>
+                    <p className="font-medium text-forest leading-snug">{lodging.name}</p>
+                    {lodging.room_type && (
+                      <p className="text-xs text-forest/60 mt-0.5">{lodging.room_type}</p>
                     )}
                   </div>
                   {lodging.listing_url && (
@@ -138,15 +126,66 @@ function DayCard({ day, lodging, activities }: { day: GDay; lodging: GLodging | 
                       href={lodging.listing_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-sage underline shrink-0"
                       onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 text-xs font-medium text-white bg-deep-teal rounded-md px-2.5 py-1 hover:bg-forest transition-colors"
                     >
-                      View ↗
+                      View listing ↗
                     </a>
                   )}
                 </div>
-                {lodging.confirmation_number && (
-                  <p className="text-xs font-mono text-forest/40 mt-2">#{lodging.confirmation_number}</p>
+                {/* Beds / baths badges */}
+                {(lodging.beds || lodging.bedrooms || lodging.bathrooms) && (
+                  <div className="flex gap-2 flex-wrap">
+                    {lodging.beds != null && (
+                      <span className="text-xs font-medium text-forest bg-white rounded-full px-2.5 py-1">
+                        🛏 {lodging.beds} bed{lodging.beds !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {lodging.bedrooms != null && (
+                      <span className="text-xs font-medium text-forest bg-white rounded-full px-2.5 py-1">
+                        🚪 {lodging.bedrooms} bedroom{lodging.bedrooms !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {lodging.bathrooms != null && (
+                      <span className="text-xs font-medium text-forest bg-white rounded-full px-2.5 py-1">
+                        🚿 {lodging.bathrooms} bath{lodging.bathrooms !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {/* Check-in / Check-out */}
+                {(lodging.check_in_time || lodging.check_out_time) && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-white rounded-lg px-3 py-2 text-center">
+                      <p className="text-[10px] uppercase tracking-wide text-forest/40 font-medium mb-0.5">Check-in</p>
+                      <p className="text-sm font-semibold text-forest">{fmtTime(lodging.check_in_time) ?? '—'}</p>
+                    </div>
+                    <div className="bg-white rounded-lg px-3 py-2 text-center">
+                      <p className="text-[10px] uppercase tracking-wide text-forest/40 font-medium mb-0.5">Check-out</p>
+                      <p className="text-sm font-semibold text-forest">{fmtTime(lodging.check_out_time) ?? '—'}</p>
+                    </div>
+                  </div>
+                )}
+                {/* Confirmation + map */}
+                {(lodging.confirmation_number || lodging.address) && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {lodging.confirmation_number && (
+                      <span className="text-xs font-mono text-forest/50 bg-white rounded px-2 py-1">
+                        #{lodging.confirmation_number}
+                      </span>
+                    )}
+                    {lodging.address && (
+                      <a
+                        href={`https://maps.google.com/?q=${encodeURIComponent(lodging.address)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs text-deep-teal hover:text-forest transition-colors"
+                      >
+                        📍 Map
+                      </a>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -351,14 +390,19 @@ export default function GuestDaysPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {days.map((day) => (
-            <DayCard
-              key={day.id}
-              day={day}
-              lodging={lodgingByDay[day.id] ?? null}
-              activities={activitiesByDay[day.id] ?? []}
-            />
-          ))}
+          {days.map((day) => {
+            const today = new Date().toISOString().split('T')[0]
+            const isToday = !!day.date && day.date === today
+            return (
+              <DayCard
+                key={day.id}
+                day={day}
+                lodging={lodgingByDay[day.id] ?? null}
+                activities={activitiesByDay[day.id] ?? []}
+                isToday={isToday}
+              />
+            )
+          })}
         </div>
       )}
     </div>
