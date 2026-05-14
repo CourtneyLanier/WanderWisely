@@ -70,6 +70,7 @@ export default function SettingsPage() {
   const [copied, setCopied] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportingGpx, setExportingGpx] = useState(false)
+  const [savingShare, setSavingShare] = useState(false)
 
   // Sync from Wallet state
   const [buildingPreview, setBuildingPreview] = useState(false)
@@ -798,10 +799,25 @@ export default function SettingsPage() {
             <button
               role="switch"
               aria-checked={shareEnabled}
-              onClick={() => setShareEnabled((v) => !v)}
+              disabled={savingShare}
+              onClick={async () => {
+                if (!trip) return
+                const next = !shareEnabled
+                setShareEnabled(next)
+                setSavingShare(true)
+                try {
+                  await supabase
+                    .from('trips')
+                    .update({ share_enabled: next })
+                    .eq('id', trip.id)
+                  queryClient.invalidateQueries({ queryKey: ['trip'] })
+                } finally {
+                  setSavingShare(false)
+                }
+              }}
               className={`relative w-11 h-6 rounded-full transition-colors ${
                 shareEnabled ? 'bg-sage' : 'bg-forest/20'
-              }`}
+              } ${savingShare ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
               <span
                 className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
