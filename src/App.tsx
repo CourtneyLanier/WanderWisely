@@ -14,8 +14,9 @@ import BudgetPage from '@/pages/owner/BudgetPage'
 import SettingsPage from '@/pages/owner/SettingsPage'
 import MapPage from '@/pages/owner/MapPage'
 import GuestLayout from '@/pages/guest/GuestLayout'
+import GuestHomePage from '@/pages/guest/GuestHomePage'
 import GuestDaysPage from '@/pages/guest/GuestDaysPage'
-import GuestWalletPage from '@/pages/guest/GuestWalletPage'
+import GuestRoutePage from '@/pages/guest/GuestRoutePage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import { useAppStore } from '@/store/useAppStore'
 import { supabase } from '@/lib/supabase'
@@ -75,8 +76,9 @@ export default function App() {
 
         {/* Guest view — no auth */}
         <Route path="/trip/:shareCode" element={<GuestLayout />}>
-          <Route index element={<GuestDaysPage />} />
-          <Route path="wallet" element={<GuestWalletPage />} />
+          <Route index element={<GuestHomePage />} />
+          <Route path="days" element={<GuestDaysPage />} />
+          <Route path="route" element={<GuestRoutePage />} />
         </Route>
 
         {/* Owner app — auth required */}

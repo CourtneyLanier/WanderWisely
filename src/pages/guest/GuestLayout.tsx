@@ -31,15 +31,22 @@ export default function GuestLayout() {
           end
           className={({ isActive }) => `tab-nav-item${isActive ? ' active' : ''}`}
         >
+          <span className="text-xl">🏠</span>
+          <span>Home</span>
+        </NavLink>
+        <NavLink
+          to={`/trip/${shareCode}/days`}
+          className={({ isActive }) => `tab-nav-item${isActive ? ' active' : ''}`}
+        >
           <span className="text-xl">📅</span>
           <span>Days</span>
         </NavLink>
         <NavLink
-          to={`/trip/${shareCode}/wallet`}
+          to={`/trip/${shareCode}/route`}
           className={({ isActive }) => `tab-nav-item${isActive ? ' active' : ''}`}
         >
-          <span className="text-xl">🎫</span>
-          <span>Wallet</span>
+          <span className="text-xl">🗺️</span>
+          <span>Route</span>
         </NavLink>
       </nav>
     </div>
