@@ -4,16 +4,41 @@ import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
-import type { Budget, SpendingLog, Reservation } from '@/types'
+import type { Budget, SpendingLog, Reservation, Trip } from '@/types'
+
+// ── helpers ────────────────────────────────────────────────────────────────────
+
+function ymd(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function todayStr() { return ymd(new Date()) }
+function logDate(log: SpendingLog) { return ymd(new Date(log.logged_at)) }
+
+function dollar(n: number) {
+  const abs = Math.abs(n)
+  return (n < 0 ? '-$' : '$') + abs.toLocaleString('en-US', { maximumFractionDigits: 0 })
+}
+
+function shortDate(iso: string) {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+/** Convert a YYYY-MM-DD date string to an ISO timestamptz using local noon,
+ *  so logDate() will always read back the same date regardless of timezone. */
+function dateToLoggedAt(dateStr: string): string {
+  return new Date(dateStr + 'T12:00:00').toISOString()
+}
 
 // ── ReceiptScanFlow ────────────────────────────────────────────────────────────
 
 type ScanStep = 'idle' | 'scanning' | 'review' | 'error'
+type ReceiptCard = 'food' | 'car' | 'hotel' | 'misc'
 
 interface ParsedReceipt {
   label: string | null
   amount: number | null
-  card: 'food' | 'car' | null
+  card: ReceiptCard | null
+  date: string | null
 }
 
 function ReceiptScanFlow({
@@ -22,7 +47,7 @@ function ReceiptScanFlow({
   onSaved,
   onCancel,
 }: {
-  defaultCard: 'food' | 'car'
+  defaultCard: ReceiptCard
   tripId: string
   onSaved: () => void
   onCancel: () => void
@@ -30,10 +55,11 @@ function ReceiptScanFlow({
   const queryClient = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<ScanStep>('idle')
-  const [, setParsed] = useState<ParsedReceipt>({ label: null, amount: null, card: defaultCard })
+  const [, setParsed] = useState<ParsedReceipt>({ label: null, amount: null, card: defaultCard, date: null })
   const [label, setLabel] = useState('')
   const [amount, setAmount] = useState('')
-  const [card, setCard] = useState<'food' | 'car'>(defaultCard)
+  const [card, setCard] = useState<ReceiptCard>(defaultCard)
+  const [date, setDate] = useState(todayStr())
   const [error, setError] = useState('')
 
   async function handleFile(file: File) {
@@ -65,6 +91,8 @@ function ReceiptScanFlow({
       setLabel(json.label ?? '')
       setAmount(json.amount != null ? String(json.amount) : '')
       setCard(json.card ?? defaultCard)
+      // Use parsed date if present and valid, otherwise keep today
+      if (json.date && /^\d{4}-\d{2}-\d{2}$/.test(json.date)) setDate(json.date)
       setStep('review')
     } catch (e) {
       setError((e as Error).message ?? 'Unknown error')
@@ -80,6 +108,7 @@ function ReceiptScanFlow({
         amount: parseFloat(amount),
         label: label.trim() || null,
         entry_type: 'per_meal',
+        logged_at: dateToLoggedAt(date),
       })
       if (error) throw error
     },
@@ -175,10 +204,22 @@ function ReceiptScanFlow({
       </div>
       <div>
         <label className="block text-sm text-forest mb-1">Category</label>
-        <select value={card} onChange={(e) => setCard(e.target.value as 'food' | 'car')} className="input">
+        <select value={card} onChange={(e) => setCard(e.target.value as ReceiptCard)} className="input">
           <option value="food">Food</option>
           <option value="car">Car / Gas</option>
+          <option value="hotel">Hotel</option>
+          <option value="misc">Miscellaneous</option>
         </select>
+      </div>
+      <div>
+        <label className="block text-sm text-forest mb-1">Date</label>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          max={todayStr()}
+          className="input"
+        />
       </div>
       {saveMutation.isError && (
         <p className="text-xs text-terracotta">{(saveMutation.error as Error).message}</p>
@@ -198,30 +239,24 @@ function ReceiptScanFlow({
   )
 }
 
-// ── helpers ────────────────────────────────────────────────────────────────────
-
-function ymd(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-function todayStr() { return ymd(new Date()) }
-function logDate(log: SpendingLog) { return ymd(new Date(log.logged_at)) }
-
-function dollar(n: number) {
-  const abs = Math.abs(n)
-  return (n < 0 ? '-$' : '$') + abs.toLocaleString('en-US', { maximumFractionDigits: 0 })
-}
-
-function shortDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
 // ── FoodCard ───────────────────────────────────────────────────────────────────
 
-function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]; tripId: string }) {
+function FoodCard({
+  budget,
+  logs,
+  tripId,
+  trip,
+}: {
+  budget: Budget
+  logs: SpendingLog[]
+  tripId: string
+  trip: Trip | null | undefined
+}) {
   const queryClient = useQueryClient()
   const [mode, setMode] = useState<'meal' | 'total' | 'scan' | null>(null)
   const [label, setLabel] = useState('')
   const [amount, setAmount] = useState('')
+  const [date, setDate] = useState(todayStr())
 
   const foodLogs = useMemo(
     () => logs.filter((l) => l.card === 'food'),
@@ -242,10 +277,23 @@ function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[
   const todaySpent = byDate[today] ?? 0
   const totalSpent = foodLogs.reduce((s, l) => s + l.amount, 0)
   const remaining = budget.food_total - totalSpent
-  const cushion = useMemo(
-    () => Object.values(byDate).reduce((sum, dayTotal) => sum + (baseline - dayTotal), 0),
-    [byDate, baseline]
-  )
+
+  // Cushion: how much ahead/behind we are vs. expected spend for elapsed trip days.
+  // Uses real elapsed days so that days with no entries still count toward the budget.
+  const cushion = useMemo(() => {
+    if (!trip?.start_date || baseline <= 0) {
+      // Fallback: sum per-day deltas when we don't have a start date
+      return Object.values(byDate).reduce((sum, dayTotal) => sum + (baseline - dayTotal), 0)
+    }
+    const start = new Date(trip.start_date + 'T00:00:00')
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    const daysPassed = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+    // daysElapsed includes today (day 1 = first day of trip), capped at food_days
+    const daysElapsed = Math.max(0, Math.min(budget.food_days, daysPassed + 1))
+    const expectedSoFar = daysElapsed * baseline
+    return expectedSoFar - totalSpent
+  }, [byDate, baseline, totalSpent, trip, budget.food_days])
 
   const todayLogs = useMemo(
     () => foodLogs.filter((l) => logDate(l) === today).sort((a, b) => b.logged_at.localeCompare(a.logged_at)),
@@ -270,6 +318,7 @@ function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[
         amount: parseFloat(amount),
         label: label.trim() || null,
         entry_type: mode === 'total' ? 'daily_total' : 'per_meal',
+        logged_at: dateToLoggedAt(date),
       })
       if (error) throw error
     },
@@ -278,6 +327,7 @@ function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[
       setMode(null)
       setLabel('')
       setAmount('')
+      setDate(todayStr())
     },
   })
 
@@ -293,6 +343,7 @@ function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[
     setMode(null)
     setLabel('')
     setAmount('')
+    setDate(todayStr())
   }
 
   return (
@@ -406,6 +457,16 @@ function FoodCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[
             </button>
             <button onClick={cancelAdd} className="btn-secondary px-3">✕</button>
           </div>
+          <div>
+            <label className="block text-xs text-forest/50 mb-1">Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              max={todayStr()}
+              className="input text-sm"
+            />
+          </div>
           {addMutation.isError && (
             <p className="text-xs text-terracotta">{(addMutation.error as Error).message}</p>
           )}
@@ -467,9 +528,13 @@ function HotelCard({
   hotelReservations: Reservation[]
 }) {
   const queryClient = useQueryClient()
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState<false | 'manual' | 'scan'>(false)
   const [label, setLabel] = useState('')
   const [amount, setAmount] = useState('')
+  const [date, setDate] = useState(todayStr())
+  // Inline cost editing on a reservation
+  const [editingCostId, setEditingCostId] = useState<string | null>(null)
+  const [editCostValue, setEditCostValue] = useState('')
 
   const hotelLogs = useMemo(
     () => logs.filter((l) => l.card === 'hotel').sort((a, b) => b.logged_at.localeCompare(a.logged_at)),
@@ -481,7 +546,6 @@ function HotelCard({
     [hotelReservations]
   )
 
-  // "Paid" = reservations explicitly marked paid (via button) + any manual log entries
   const paidViaReservations = useMemo(
     () => hotelReservations.filter((r) => r.paid).reduce((s, r) => s + (r.cost ?? 0), 0),
     [hotelReservations]
@@ -492,14 +556,10 @@ function HotelCard({
   const pct = totalBooked > 0 ? Math.min(100, (totalPaid / totalBooked) * 100) : 0
   const overPaid = totalPaid > totalBooked && totalBooked > 0
 
-  // Toggle paid status on a reservation
   const togglePaidMutation = useMutation({
     mutationFn: async ({ id, paid, label }: { id: string; paid: boolean; cost: number | null; label: string }) => {
-      // Update the reservation paid flag only — spending_log is for manual deposits only
       const { error } = await supabase.from('reservations').update({ paid }).eq('id', id)
       if (error) throw error
-
-      // If undoing, also clean up any legacy auto-generated "Paid: X" log entries
       if (!paid) {
         await supabase.from('spending_log')
           .delete()
@@ -514,10 +574,20 @@ function HotelCard({
     },
   })
 
-  // Cleanup: remove ALL auto-generated hotel log entries — paid flag on reservations is source of truth
+  const updateCostMutation = useMutation({
+    mutationFn: async ({ id, cost }: { id: string; cost: number }) => {
+      const { error } = await supabase.from('reservations').update({ cost }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['hotel-reservations-budget', tripId] })
+      setEditingCostId(null)
+      setEditCostValue('')
+    },
+  })
+
   const recalcMutation = useMutation({
     mutationFn: async () => {
-      // Delete anything that looks auto-generated: "Paid: X" prefix OR label matching a known hotel name
       const hotelNames = hotelReservations.map((r) => r.title || r.provider || '').filter(Boolean)
       const { error } = await supabase.from('spending_log')
         .delete()
@@ -542,6 +612,7 @@ function HotelCard({
         amount: parseFloat(amount),
         label: label.trim() || null,
         entry_type: 'per_meal',
+        logged_at: dateToLoggedAt(date),
       })
       if (error) throw error
     },
@@ -550,6 +621,7 @@ function HotelCard({
       setAdding(false)
       setLabel('')
       setAmount('')
+      setDate(todayStr())
     },
   })
 
@@ -561,7 +633,7 @@ function HotelCard({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] }),
   })
 
-  function cancelAdd() { setAdding(false); setLabel(''); setAmount('') }
+  function cancelAdd() { setAdding(false); setLabel(''); setAmount(''); setDate(todayStr()) }
 
   return (
     <div className="card">
@@ -605,49 +677,89 @@ function HotelCard({
         </>
       )}
 
-      {/* Hotel reservations — per-reservation mark paid */}
+      {/* Hotel reservations — per-reservation mark paid + inline cost edit */}
       {hotelReservations.length > 0 && (
         <div className="mb-3 space-y-2">
           <p className="section-label mb-1.5">Hotels</p>
           {hotelReservations.map((r) => {
             const resLabel = r.title || r.provider || 'Hotel'
+            const isEditingCost = editingCostId === r.id
             return (
               <div
                 key={r.id}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border transition-colors ${
-                  r.paid
-                    ? 'bg-sage/8 border-sage/20'
-                    : 'bg-forest/[0.03] border-forest/8'
+                className={`rounded-lg px-3 py-2.5 border transition-colors ${
+                  r.paid ? 'bg-sage/8 border-sage/20' : 'bg-forest/[0.03] border-forest/8'
                 }`}
               >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-forest truncate">{resLabel}</span>
-                    {r.paid && <span className="text-xs text-sage font-medium shrink-0">✓ Paid</span>}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-forest truncate">{resLabel}</span>
+                      {r.paid && <span className="text-xs text-sage font-medium shrink-0">✓ Paid</span>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {r.date && <span className="text-xs text-forest/40">{fmtResDate(r.date)}</span>}
+                      {/* Inline cost edit */}
+                      {isEditingCost ? (
+                        <div className="flex items-center gap-1 mt-1">
+                          <span className="text-xs text-forest/40">$</span>
+                          <input
+                            type="number"
+                            value={editCostValue}
+                            onChange={(e) => setEditCostValue(e.target.value)}
+                            className="input font-mono text-xs py-0.5 w-24"
+                            min="0"
+                            step="0.01"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => {
+                              const cost = parseFloat(editCostValue)
+                              if (!isNaN(cost) && cost >= 0) updateCostMutation.mutate({ id: r.id, cost })
+                            }}
+                            disabled={updateCostMutation.isPending}
+                            className="text-xs text-sage font-medium px-1"
+                          >
+                            {updateCostMutation.isPending ? '…' : '✓'}
+                          </button>
+                          <button
+                            onClick={() => { setEditingCostId(null); setEditCostValue('') }}
+                            className="text-xs text-forest/40 px-1"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        r.cost != null && (
+                          <button
+                            onClick={() => { setEditingCostId(r.id); setEditCostValue(String(r.cost)) }}
+                            className="font-mono text-xs text-gold hover:text-forest transition-colors flex items-center gap-1"
+                            title="Edit cost"
+                          >
+                            {dollar(r.cost)}
+                            <span className="text-forest/30 text-xs">✎</span>
+                          </button>
+                        )
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {r.date && <span className="text-xs text-forest/40">{fmtResDate(r.date)}</span>}
-                    {r.cost != null && (
-                      <span className="font-mono text-xs text-gold">{dollar(r.cost)}</span>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => togglePaidMutation.mutate({
+                      id: r.id,
+                      paid: !r.paid,
+                      cost: r.cost,
+                      label: resLabel,
+                    })}
+                    disabled={togglePaidMutation.isPending}
+                    className={`shrink-0 text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${
+                      r.paid
+                        ? 'bg-forest/10 text-forest/50 hover:bg-terracotta/10 hover:text-terracotta'
+                        : 'bg-sage text-white hover:bg-sage/80'
+                    }`}
+                  >
+                    {r.paid ? 'Undo' : 'Mark paid'}
+                  </button>
                 </div>
-                <button
-                  onClick={() => togglePaidMutation.mutate({
-                    id: r.id,
-                    paid: !r.paid,
-                    cost: r.cost,
-                    label: resLabel,
-                  })}
-                  disabled={togglePaidMutation.isPending}
-                  className={`shrink-0 text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${
-                    r.paid
-                      ? 'bg-forest/10 text-forest/50 hover:bg-terracotta/10 hover:text-terracotta'
-                      : 'bg-sage text-white hover:bg-sage/80'
-                  }`}
-                >
-                  {r.paid ? 'Undo' : 'Mark paid'}
-                </button>
               </div>
             )
           })}
@@ -660,8 +772,20 @@ function HotelCard({
         </p>
       )}
 
-      {/* Manual payment log (for deposits, partial pays, etc.) */}
-      {adding && (
+      {/* Scan receipt flow */}
+      {adding === 'scan' && (
+        <div className="bg-cream rounded-lg p-3 mb-3 border border-forest/10">
+          <ReceiptScanFlow
+            defaultCard="hotel"
+            tripId={tripId}
+            onSaved={() => setAdding(false)}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
+
+      {/* Manual payment log */}
+      {adding === 'manual' && (
         <div className="bg-cream rounded-lg p-3 mb-3 space-y-2 border border-forest/10">
           <p className="text-xs font-medium text-forest/50 uppercase tracking-wide">Log a partial payment or deposit</p>
           <input
@@ -691,6 +815,16 @@ function HotelCard({
             </button>
             <button onClick={cancelAdd} className="btn-secondary px-3">✕</button>
           </div>
+          <div>
+            <label className="block text-xs text-forest/50 mb-1">Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              max={todayStr()}
+              className="input text-sm"
+            />
+          </div>
           {addMutation.isError && (
             <p className="text-xs text-terracotta">{(addMutation.error as Error).message}</p>
           )}
@@ -699,9 +833,14 @@ function HotelCard({
 
       {!adding && (
         <div className="space-y-2">
-          <button onClick={() => setAdding(true)} className="btn-secondary w-full text-xs py-2">
-            + Log partial payment / deposit
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setAdding('manual')} className="btn-secondary flex-1 text-xs py-2">
+              + Log payment / deposit
+            </button>
+            <button onClick={() => setAdding('scan')} className="btn-secondary flex-1 text-xs py-2">
+              📷 Scan receipt
+            </button>
+          </div>
           <button
             onClick={() => recalcMutation.mutate()}
             disabled={recalcMutation.isPending}
@@ -740,6 +879,7 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
   const [adding, setAdding] = useState<'manual' | 'scan' | false>(false)
   const [label, setLabel] = useState('')
   const [amount, setAmount] = useState('')
+  const [date, setDate] = useState(todayStr())
 
   const carLogs = useMemo(
     () => logs.filter((l) => l.card === 'car').sort((a, b) => b.logged_at.localeCompare(a.logged_at)),
@@ -759,6 +899,7 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
         amount: parseFloat(amount),
         label: label.trim() || null,
         entry_type: 'per_meal',
+        logged_at: dateToLoggedAt(date),
       })
       if (error) throw error
     },
@@ -767,6 +908,7 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
       setAdding(false)
       setLabel('')
       setAmount('')
+      setDate(todayStr())
     },
   })
 
@@ -778,7 +920,7 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] }),
   })
 
-  function cancelAdd() { setAdding(false); setLabel(''); setAmount('') }
+  function cancelAdd() { setAdding(false); setLabel(''); setAmount(''); setDate(todayStr()) }
 
   return (
     <div className="card">
@@ -861,6 +1003,16 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
             </button>
             <button onClick={cancelAdd} className="btn-secondary px-3">✕</button>
           </div>
+          <div>
+            <label className="block text-xs text-forest/50 mb-1">Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              max={todayStr()}
+              className="input text-sm"
+            />
+          </div>
           {addMutation.isError && (
             <p className="text-xs text-terracotta">{(addMutation.error as Error).message}</p>
           )}
@@ -898,13 +1050,166 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
   )
 }
 
+// ── MiscCard ───────────────────────────────────────────────────────────────────
+
+function MiscCard({ logs, tripId }: { logs: SpendingLog[]; tripId: string }) {
+  const queryClient = useQueryClient()
+  const [adding, setAdding] = useState<'manual' | 'scan' | false>(false)
+  const [label, setLabel] = useState('')
+  const [amount, setAmount] = useState('')
+  const [date, setDate] = useState(todayStr())
+
+  const miscLogs = useMemo(
+    () => logs.filter((l) => l.card === 'misc').sort((a, b) => b.logged_at.localeCompare(a.logged_at)),
+    [logs]
+  )
+
+  const totalSpent = miscLogs.reduce((s, l) => s + l.amount, 0)
+
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from('spending_log').insert({
+        trip_id: tripId,
+        card: 'misc',
+        amount: parseFloat(amount),
+        label: label.trim() || null,
+        entry_type: 'per_meal',
+        logged_at: dateToLoggedAt(date),
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] })
+      setAdding(false)
+      setLabel('')
+      setAmount('')
+      setDate(todayStr())
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('spending_log').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['spending_log', tripId] }),
+  })
+
+  function cancelAdd() { setAdding(false); setLabel(''); setAmount(''); setDate(todayStr()) }
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gold">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="16"/>
+            <line x1="8" y1="12" x2="16" y2="12"/>
+          </svg>
+          <p className="font-display text-lg text-forest">Miscellaneous</p>
+        </div>
+        <div className="text-sm font-mono font-semibold text-forest/60">
+          {dollar(Math.round(totalSpent))} total
+        </div>
+      </div>
+
+      {/* Scan receipt flow */}
+      {adding === 'scan' && (
+        <div className="bg-cream rounded-lg p-3 mb-3 border border-forest/10">
+          <ReceiptScanFlow
+            defaultCard="misc"
+            tripId={tripId}
+            onSaved={() => setAdding(false)}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
+
+      {/* Manual add form */}
+      {adding === 'manual' && (
+        <div className="bg-cream rounded-lg p-3 mb-3 space-y-2 border border-forest/10">
+          <p className="text-xs font-medium text-forest/50 uppercase tracking-wide">Log misc expense</p>
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. Souvenir, park entry, etc."
+            className="input"
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="$0"
+              min="0"
+              step="0.01"
+              className="input font-mono flex-1"
+            />
+            <button
+              onClick={() => addMutation.mutate()}
+              disabled={addMutation.isPending || !amount || parseFloat(amount) <= 0}
+              className="btn-primary px-4"
+            >
+              {addMutation.isPending ? '…' : 'Save'}
+            </button>
+            <button onClick={cancelAdd} className="btn-secondary px-3">✕</button>
+          </div>
+          <div>
+            <label className="block text-xs text-forest/50 mb-1">Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              max={todayStr()}
+              className="input text-sm"
+            />
+          </div>
+          {addMutation.isError && (
+            <p className="text-xs text-terracotta">{(addMutation.error as Error).message}</p>
+          )}
+        </div>
+      )}
+
+      {!adding && (
+        <div className="flex gap-2">
+          <button onClick={() => setAdding('manual')} className="btn-secondary flex-1 text-xs py-2">
+            + Log expense
+          </button>
+          <button onClick={() => setAdding('scan')} className="btn-secondary flex-1 text-xs py-2">
+            📷 Scan receipt
+          </button>
+        </div>
+      )}
+
+      {/* Entries list */}
+      {miscLogs.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {miscLogs.slice(0, 10).map((l) => (
+            <div key={l.id} className="flex items-center justify-between text-sm">
+              <span className="text-forest truncate flex-1 mr-2">{l.label || 'Misc'}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-mono text-forest">{dollar(l.amount)}</span>
+                <span className="text-xs text-forest/40">{shortDate(l.logged_at)}</span>
+                <button onClick={() => deleteMutation.mutate(l.id)}
+                  className="text-terracotta/50 hover:text-terracotta text-xs leading-none">✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function BudgetPage() {
   const tripId = useAppStore((s) => s.tripId)
   const { data: trip, isLoading: tripLoading } = useTrip()
 
-  // Use trip?.id directly so the query isn't blocked by Zustand store timing
   const activeTripId = trip?.id ?? tripId
 
   const { data: budget, isLoading: budgetLoading } = useQuery({
@@ -984,9 +1289,10 @@ export default function BudgetPage() {
       </div>
 
       <div className="space-y-4">
-        <FoodCard budget={budget} logs={logs} tripId={activeTripId} />
+        <FoodCard budget={budget} logs={logs} tripId={activeTripId} trip={trip} />
         <HotelCard logs={logs} tripId={activeTripId} hotelReservations={hotelReservations} />
         <CarCard budget={budget} logs={logs} tripId={activeTripId} />
+        <MiscCard logs={logs} tripId={activeTripId} />
       </div>
     </div>
   )

@@ -56,12 +56,17 @@ Return this exact structure:
 {
   "label": "string (merchant name and brief description, e.g. \\"McDonald's – Breakfast\\" or \\"Shell – Gas\\")",
   "amount": number,
-  "card": "food or car"
+  "card": "food or car or hotel or misc",
+  "date": "YYYY-MM-DD or null"
 }
 
 card rules:
 - "food" for restaurants, cafes, grocery stores, fast food, bars
 - "car" for gas stations, parking, tolls, car washes, auto services
+- "hotel" for hotel stays, lodging, room charges, resort fees
+- "misc" for everything else (shopping, souvenirs, attractions, tickets, pharmacy, etc.)
+
+date: extract the transaction date from the receipt if visible (format YYYY-MM-DD). Use null if not found.
 
 If a field cannot be determined, use null.`
 

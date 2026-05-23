@@ -98,7 +98,7 @@ type SpendingLogInsert = {
   id?: string
   trip_id: string
   day_id?: string | null
-  card: 'food' | 'hotel' | 'car'
+  card: 'food' | 'hotel' | 'car' | 'misc'
   amount: number
   label?: string | null
   logged_at?: string
@@ -230,7 +230,7 @@ export interface Database {
           id: string
           trip_id: string
           day_id: string | null
-          card: 'food' | 'hotel' | 'car'
+          card: 'food' | 'hotel' | 'car' | 'misc'
           amount: number
           label: string | null
           logged_at: string
