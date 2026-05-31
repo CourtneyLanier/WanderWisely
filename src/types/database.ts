@@ -105,6 +105,28 @@ type SpendingLogInsert = {
   entry_type: 'per_meal' | 'daily_total'
 }
 
+type TripNoteInsert = {
+  id?: string
+  trip_id: string
+  title?: string
+  content?: string
+  sort_order?: number
+  created_at?: string
+  updated_at?: string
+}
+
+type TripDocumentInsert = {
+  id?: string
+  trip_id: string
+  title: string
+  doc_type?: 'itinerary' | 'side_quest' | 'packing_list' | 'other'
+  content?: string
+  url?: string | null
+  sort_order?: number
+  created_at?: string
+  updated_at?: string
+}
+
 // ── Database type ──────────────────────────────────────────────────────────────
 // Each table requires `Relationships: []` to satisfy GenericTable from supabase-js.
 // Schema requires `Views: Record<string, never>` to satisfy GenericSchema.
@@ -238,6 +260,36 @@ export interface Database {
         }
         Insert: SpendingLogInsert
         Update: Partial<SpendingLogInsert>
+        Relationships: []
+      }
+      trip_notes: {
+        Row: {
+          id: string
+          trip_id: string
+          title: string
+          content: string
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: TripNoteInsert
+        Update: Partial<TripNoteInsert>
+        Relationships: []
+      }
+      trip_documents: {
+        Row: {
+          id: string
+          trip_id: string
+          title: string
+          doc_type: 'itinerary' | 'side_quest' | 'packing_list' | 'other'
+          content: string
+          url: string | null
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: TripDocumentInsert
+        Update: Partial<TripDocumentInsert>
         Relationships: []
       }
     }
