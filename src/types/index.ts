@@ -123,6 +123,31 @@ export type GuestActivity = Omit<Activity, 'estimated_cost'>
 export type GuestReservation = Omit<Reservation, 'cost' | 'raw_email_text'>
 
 
+export interface TripNote {
+  id: string
+  trip_id: string
+  title: string
+  content: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export type DocType = 'itinerary' | 'side_quest' | 'packing_list' | 'other'
+
+export interface TripDocument {
+  id: string
+  trip_id: string
+  title: string
+  doc_type: DocType
+  content: string
+  url: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+
 // ============================================================
 // UTILITY TYPES
 // ============================================================

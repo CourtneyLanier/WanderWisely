@@ -13,6 +13,7 @@ import RoutePage from '@/pages/owner/RoutePage'
 import BudgetPage from '@/pages/owner/BudgetPage'
 import SettingsPage from '@/pages/owner/SettingsPage'
 import MapPage from '@/pages/owner/MapPage'
+import NotesPage from '@/pages/owner/NotesPage'
 import GuestLayout from '@/pages/guest/GuestLayout'
 import GuestHomePage from '@/pages/guest/GuestHomePage'
 import GuestDaysPage from '@/pages/guest/GuestDaysPage'
@@ -94,6 +95,7 @@ export default function App() {
             <Route path="/budget" element={<BudgetPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/map" element={<MapPage />} />
+            <Route path="/notes" element={<NotesPage />} />
           </Route>
         </Route>
 
