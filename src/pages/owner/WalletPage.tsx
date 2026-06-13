@@ -669,11 +669,33 @@ export default function WalletPage() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('reservations').delete().eq('id', id)
+    mutationFn: async (res: Reservation) => {
+      // If this hotel reservation was marked paid, "Mark paid" created a hidden
+      // spending_log entry (label "Paid: <name>") so the Budget counted it. Remove
+      // that entry too, otherwise its cost lingers in the Budget after delete.
+      if (res.type === 'hotel' && res.paid) {
+        const resLabel = res.title || res.provider || 'Hotel'
+        const { error: logErr } = await supabase
+          .from('spending_log')
+          .delete()
+          .eq('trip_id', tripId!)
+          .eq('card', 'hotel')
+          .eq('label', `Paid: ${resLabel}`)
+        if (logErr) throw logErr
+      }
+      const { error } = await supabase.from('reservations').delete().eq('id', res.id)
       if (error) throw error
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reservations', tripId] }),
+    // A reservation surfaces across Wallet, Days, Budget, Route, Map and Day-detail —
+    // each with its own query key. Invalidate every reservation-derived query (plus
+    // spending_log, which we may have just edited) so the whole app reflects the delete.
+    onSuccess: () => queryClient.invalidateQueries({
+      predicate: (q) => {
+        const k = q.queryKey[0]
+        return typeof k === 'string' &&
+          (k.includes('reservation') || k === 'map-addresses' || k === 'spending_log')
+      },
+    }),
   })
 
   function handleSave(form: FormState, rawEmail?: string, pdfUrl?: string) {
@@ -833,7 +855,7 @@ export default function WalletPage() {
               key={r.id}
               res={r}
               onDelete={() => {
-                if (confirm('Delete this reservation?')) deleteMutation.mutate(r.id)
+                if (confirm('Delete this reservation?')) deleteMutation.mutate(r)
               }}
             />
           ))}
