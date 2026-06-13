@@ -11,6 +11,12 @@ dist/
 
 # vite
 *.local
+vite.config.ts.timestamp-*.mjs
+vite.config.js.timestamp-*.mjs
+
+# supabase local CLI state
+supabase/.temp/
+supabase/.branches/
 
 # editor
 .vscode/
