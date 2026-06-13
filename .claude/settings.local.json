@@ -29,5 +29,19 @@
       "Bash(xargs grep *)",
       "Bash(find /c/Users/Jered/MyApps/WanderWisely/public -type f -exec ls -lh {} \\\\;)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/check-sync.mjs",
+            "timeout": 20,
+            "statusMessage": "Checking if WanderWisely is up to date with GitHub..."
+          }
+        ]
+      }
+    ]
   }
 }
