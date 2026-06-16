@@ -77,10 +77,12 @@ export default function SettingsPage() {
   const [syncPreview, setSyncPreview] = useState<DaySyncChange[] | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncApplied, setSyncApplied] = useState(false)
+  // 'fill' = only populate blank locations (safe); 'overwrite' = replace existing ones too.
+  const [syncMode, setSyncMode] = useState<'fill' | 'overwrite'>('fill')
 
   // ── Sync from Wallet ────────────────────────────────────────────────────────
 
-  async function buildSyncPlan(): Promise<DaySyncChange[]> {
+  async function buildSyncPlan(mode: 'fill' | 'overwrite'): Promise<DaySyncChange[]> {
     if (!tripId) return []
 
     const [daysRes, reservationsRes, activitiesRes] = await Promise.all([
@@ -129,30 +131,39 @@ export default function SettingsPage() {
       const day = dayByDate.get(hotel.date!)
       if (!day) continue
 
-      // end_location = this hotel (only if blank)
-      if (!day.end_location) {
+      // end_location = this hotel. Fill mode: only when blank. Overwrite mode:
+      // whenever the existing value differs from the hotel address.
+      const endNeedsChange = mode === 'overwrite'
+        ? day.end_location !== hotel.address
+        : !day.end_location
+      if (endNeedsChange) {
         const dc = getDayChange(day)
         if (!dc.locationChanges.find((c) => c.field === 'end_location')) {
           dc.locationChanges.push({
             field: 'end_location',
-            current: null,
+            current: day.end_location,
             proposed: hotel.address!,
             source: hotel.title || hotel.provider || 'Hotel',
           })
         }
       }
 
-      // start_location = previous hotel address (only if blank)
-      if (!day.start_location && i > 0) {
+      // start_location = previous hotel address (same fill/overwrite rule).
+      if (i > 0) {
         const prevHotel = hotels[i - 1]
-        const dc = getDayChange(day)
-        if (!dc.locationChanges.find((c) => c.field === 'start_location')) {
-          dc.locationChanges.push({
-            field: 'start_location',
-            current: null,
-            proposed: prevHotel.address!,
-            source: prevHotel.title || prevHotel.provider || 'Hotel',
-          })
+        const startNeedsChange = mode === 'overwrite'
+          ? day.start_location !== prevHotel.address
+          : !day.start_location
+        if (startNeedsChange) {
+          const dc = getDayChange(day)
+          if (!dc.locationChanges.find((c) => c.field === 'start_location')) {
+            dc.locationChanges.push({
+              field: 'start_location',
+              current: day.start_location,
+              proposed: prevHotel.address!,
+              source: prevHotel.title || prevHotel.provider || 'Hotel',
+            })
+          }
         }
       }
     }
@@ -183,10 +194,11 @@ export default function SettingsPage() {
     )
   }
 
-  async function handleBuildPreview() {
+  async function handleBuildPreview(mode: 'fill' | 'overwrite') {
+    setSyncMode(mode)
     setBuildingPreview(true)
     try {
-      const plan = await buildSyncPlan()
+      const plan = await buildSyncPlan(mode)
       setSyncPreview(plan)
     } finally {
       setBuildingPreview(false)
@@ -664,8 +676,8 @@ export default function SettingsPage() {
           <div className="card">
             <p className="section-label">Sync from Wallet</p>
             <p className="text-sm text-forest/60 mb-3">
-              Auto-fill blank day locations and add reservations as activities using your uploaded
-              reservations. Only fills empty fields — nothing you've entered will be overwritten.
+              Auto-fill day locations and add reservations as activities from your Wallet. Choose how
+              to handle days that already have locations set — you'll preview every change before it's applied.
             </p>
 
             {syncApplied && (
@@ -673,17 +685,30 @@ export default function SettingsPage() {
             )}
 
             {syncPreview === null ? (
-              <button
-                onClick={handleBuildPreview}
-                disabled={buildingPreview}
-                className="btn-secondary w-full text-sm flex items-center justify-center gap-2"
-              >
-                {buildingPreview ? (
-                  <><span className="animate-pulse">⏳</span><span>Building preview…</span></>
-                ) : (
-                  <><span>🔄</span><span>Preview changes</span></>
-                )}
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={() => handleBuildPreview('fill')}
+                  disabled={buildingPreview}
+                  className="btn-secondary w-full text-sm flex items-center justify-center gap-2"
+                >
+                  {buildingPreview && syncMode === 'fill' ? (
+                    <><span className="animate-pulse">⏳</span><span>Building preview…</span></>
+                  ) : (
+                    <><span>🔄</span><span>Fill blanks only (keep what I entered)</span></>
+                  )}
+                </button>
+                <button
+                  onClick={() => handleBuildPreview('overwrite')}
+                  disabled={buildingPreview}
+                  className="btn-secondary w-full text-sm flex items-center justify-center gap-2"
+                >
+                  {buildingPreview && syncMode === 'overwrite' ? (
+                    <><span className="animate-pulse">⏳</span><span>Building preview…</span></>
+                  ) : (
+                    <><span>⚠️</span><span>Overwrite existing locations</span></>
+                  )}
+                </button>
+              </div>
             ) : syncPreview.length === 0 ? (
               <div className="space-y-3">
                 <div className="bg-sage/10 rounded-lg px-3 py-3 text-sm text-forest/70 text-center">
@@ -699,6 +724,7 @@ export default function SettingsPage() {
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-forest/50">
+                  {syncMode === 'overwrite' ? 'Overwrite mode — ' : 'Fill-blanks mode — '}
                   {syncPreview.length} day{syncPreview.length !== 1 ? 's' : ''} will be updated:
                 </p>
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
@@ -713,6 +739,9 @@ export default function SettingsPage() {
                             {lc.field === 'start_location' ? 'From' : 'To'}:
                           </span>{' '}
                           <span className="text-sage font-medium">{lc.proposed}</span>
+                          {lc.current && (
+                            <span className="text-terracotta/70"> (replaces: {lc.current})</span>
+                          )}
                           <span className="text-forest/40"> — from {lc.source}</span>
                         </p>
                       ))}
