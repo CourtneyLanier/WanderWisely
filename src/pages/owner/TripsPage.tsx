@@ -72,10 +72,32 @@ export default function TripsPage() {
     },
   })
 
+  // Deleting a trip cascades in the DB (days, lodging, activities, reservations,
+  // budget, spending_log, notes, documents all FK to trips ON DELETE CASCADE).
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('trips').delete().eq('id', id)
+      if (error) throw error
+      return id
+    },
+    onSuccess: (deletedId) => {
+      // If we just deleted the active trip, clear the selection.
+      if (tripId === deletedId) setTripId(null)
+      queryClient.invalidateQueries({ queryKey: ['all-trips'] })
+    },
+  })
+
   function selectTrip(trip: Trip) {
     setTripId(trip.id)
     queryClient.invalidateQueries({ queryKey: ['trip'] })
     navigate('/overview', { replace: true })
+  }
+
+  function confirmDelete(trip: Trip) {
+    const ok = confirm(
+      `Delete "${trip.name}"?\n\nThis permanently removes its days, reservations, budget, spending, and notes. This cannot be undone.`
+    )
+    if (ok) deleteMutation.mutate(trip.id)
   }
 
   function cancelCreate() {
@@ -128,6 +150,12 @@ export default function TripsPage() {
         </div>
       )}
 
+      {deleteMutation.isError && (
+        <p className="text-sm text-terracotta bg-terracotta/10 rounded-lg px-3 py-2 mb-3">
+          Couldn't delete trip: {(deleteMutation.error as Error).message}
+        </p>
+      )}
+
       {isLoading && (
         <p className="text-forest/40 text-sm text-center py-20">Loading…</p>
       )}
@@ -150,10 +178,13 @@ export default function TripsPage() {
             const status = tripStatus(trip)
             const dateRange = fmtDateRange(trip)
             return (
-              <button
+              <div
                 key={trip.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => selectTrip(trip)}
-                className={`card w-full text-left transition-colors ${
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectTrip(trip) } }}
+                className={`card w-full text-left transition-colors cursor-pointer ${
                   isActive
                     ? 'border-sage/50 bg-sage/5'
                     : 'hover:border-forest/20 hover:bg-cream/50'
@@ -176,11 +207,21 @@ export default function TripsPage() {
                       <p className="text-xs text-forest/40 mt-0.5">{trip.num_days} days</p>
                     )}
                   </div>
-                  <span className={`text-xs font-medium shrink-0 mt-0.5 ${status.color}`}>
-                    {status.label}
-                  </span>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <span className={`text-xs font-medium mt-0.5 ${status.color}`}>
+                      {status.label}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); confirmDelete(trip) }}
+                      disabled={deleteMutation.isPending}
+                      className="text-xs text-terracotta/70 hover:text-terracotta transition-colors disabled:opacity-50"
+                      aria-label={`Delete ${trip.name}`}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-              </button>
+              </div>
             )
           })}
         </div>
