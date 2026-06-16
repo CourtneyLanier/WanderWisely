@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
+import { useQueryClient, useQuery, useMutation, type QueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
@@ -16,6 +16,19 @@ const TYPE_LABELS: Record<ReservationType, string> = {
 const ALL_TYPES: ReservationType[] = ['flight', 'hotel', 'car', 'restaurant', 'activity', 'other']
 
 // ── helpers ────────────────────────────────────────────────────────────────────
+
+// A reservation surfaces across Wallet, Days, Budget, Route, Map and Day-detail —
+// each with its own query key. Invalidate every reservation-derived view so adds,
+// edits and deletes propagate app-wide (spending_log too, since paid logs derive from it).
+function invalidateReservationViews(qc: QueryClient) {
+  qc.invalidateQueries({
+    predicate: (q) => {
+      const k = q.queryKey[0]
+      return typeof k === 'string' &&
+        (k.includes('reservation') || k === 'map-addresses' || k === 'spending_log')
+    },
+  })
+}
 
 function extractJson(raw: string): Record<string, unknown> {
   const stripped = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
@@ -98,7 +111,7 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
       if (error) throw error
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['reservations'] })
+      invalidateReservationViews(queryClient)
       setEditing(false)
       setExpanded(false)
     },
@@ -663,7 +676,7 @@ export default function WalletPage() {
       if (error) throw error
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['reservations', tripId] })
+      invalidateReservationViews(queryClient)
       setAddMode(null)
     },
   })
@@ -686,16 +699,7 @@ export default function WalletPage() {
       const { error } = await supabase.from('reservations').delete().eq('id', res.id)
       if (error) throw error
     },
-    // A reservation surfaces across Wallet, Days, Budget, Route, Map and Day-detail —
-    // each with its own query key. Invalidate every reservation-derived query (plus
-    // spending_log, which we may have just edited) so the whole app reflects the delete.
-    onSuccess: () => queryClient.invalidateQueries({
-      predicate: (q) => {
-        const k = q.queryKey[0]
-        return typeof k === 'string' &&
-          (k.includes('reservation') || k === 'map-addresses' || k === 'spending_log')
-      },
-    }),
+    onSuccess: () => invalidateReservationViews(queryClient),
   })
 
   function handleSave(form: FormState, rawEmail?: string, pdfUrl?: string) {

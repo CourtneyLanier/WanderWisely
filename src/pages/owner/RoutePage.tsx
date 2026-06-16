@@ -46,6 +46,16 @@ function persistCustomWaypoints(dayId: string, wps: string[]) {
   localStorage.setItem(`ww-waypoints-${dayId}`, JSON.stringify(wps))
 }
 
+// Remember the origin→destination the stored drive time was last computed from,
+// so we only auto-recalculate when the route actually changes (and don't stampede
+// the geocoder for every existing day on first load).
+function loadCalcKey(dayId: string): string | null {
+  try { return localStorage.getItem(`ww-route-calc-${dayId}`) } catch { return null }
+}
+function saveCalcKey(dayId: string, key: string) {
+  try { localStorage.setItem(`ww-route-calc-${dayId}`, key) } catch { /* ignore */ }
+}
+
 
 // ── LocationField ─────────────────────────────────────────────────────────────
 
@@ -189,6 +199,9 @@ function DayRoute({
   const origin = day.start_location || hotelOrigin
   const destination = day.end_location || hotelDestination
 
+  // Signature of the current route; when it changes we refresh the drive time.
+  const routeKey = origin && destination ? `${origin}=>${destination}` : null
+
   // All waypoints: activity reservations (sorted by time) + custom user-added
   const allWaypoints = useMemo(() => {
     const actAddr = activityWaypoints.map((w) => w.address)
@@ -228,6 +241,9 @@ function DayRoute({
         .update({ drive_hours: result.hours, drive_miles: result.miles })
         .eq('id', day.id)
       if (error) throw error
+      // Record the route these hours were computed from so we don't recalc again
+      // until something actually changes.
+      saveCalcKey(day.id, `${origin}=>${destination}`)
       queryClient.invalidateQueries({ queryKey: ['days'] })
       setCalcState('idle')
     } catch (e) {
@@ -235,6 +251,23 @@ function DayRoute({
       setCalcState('error')
     }
   }
+
+  // Auto-recalculate drive time when the route changes (e.g. you edit a location
+  // or a wallet hotel updates). First time we see a day, we just record its route
+  // without recalculating — that keeps existing trips from refetching every day at
+  // once, and only refreshes once the route genuinely changes.
+  useEffect(() => {
+    if (!routeKey) return
+    const stored = loadCalcKey(day.id)
+    if (stored === null) {
+      saveCalcKey(day.id, routeKey)
+      return
+    }
+    if (stored !== routeKey && calcState !== 'calculating') {
+      calculateDrive()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey])
 
   function saveCustomWaypoints() {
     const parsed = waypointDraft.split('\n').map((s) => s.trim()).filter(Boolean)
