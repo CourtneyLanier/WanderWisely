@@ -314,11 +314,28 @@ function DayRoute({
           <button
             onClick={calculateDrive}
             disabled={!hasRoute || calcState === 'calculating'}
-            className="text-xs text-forest/40 hover:text-sage transition-colors ml-auto"
-            title="Recalculate"
+            className="ml-auto flex items-center gap-1.5 text-xs font-medium text-deep-teal bg-deep-teal/10 hover:bg-deep-teal/20 active:bg-deep-teal/30 rounded-md px-3 py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Recalculate drive time"
+            aria-label="Recalculate drive time"
           >
-            ↻
+            <svg
+              width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              className={calcState === 'calculating' ? 'animate-spin' : ''}
+            >
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+            <span>{calcState === 'calculating' ? 'Recalculating…' : 'Recalc'}</span>
           </button>
+        </div>
+      )}
+      {/* Recalc failed (drive-time box is already showing the old value) */}
+      {hasDriveTime && calcState === 'error' && (
+        <div className="bg-terracotta/10 rounded-lg px-3 py-2 -mt-1">
+          <p className="text-xs text-terracotta">{calcError}</p>
+          <button onClick={() => setCalcState('idle')} className="text-xs text-forest/50 underline mt-1">Dismiss</button>
         </div>
       )}
 
