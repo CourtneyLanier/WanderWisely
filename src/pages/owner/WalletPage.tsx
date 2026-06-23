@@ -79,6 +79,69 @@ const EMPTY_FORM: FormState = {
   date: '', time: '', address: '', listing_url: '', cost: '', details: {},
 }
 
+// ── shared insert/delete helpers ─────────────────────────────────────────────────
+
+// Map Claude's parsed JSON onto our form shape. Shared by the email and PDF flows.
+function jsonToForm(json: Record<string, unknown>): FormState {
+  const s = (k: string) => (typeof json[k] === 'string' ? (json[k] as string) : '')
+  return {
+    type: (json.type as ReservationType) ?? 'other',
+    title: s('title'),
+    provider: s('provider'),
+    confirmation_number: s('confirmation_number'),
+    date: s('date'),
+    time: s('time'),
+    address: s('address'),
+    listing_url: s('listing_url'),
+    cost: json.cost != null ? String(json.cost) : '',
+    details: (json.details ?? {}) as Json,
+  }
+}
+
+function readBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve((reader.result as string).split(',')[1])
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+// Build the DB row for an insert from form state (shared by single + batch save).
+function reservationRow(form: FormState, tripId: string) {
+  return {
+    trip_id: tripId,
+    type: form.type,
+    title: form.title || null,
+    provider: form.provider || null,
+    confirmation_number: form.confirmation_number || null,
+    date: form.date || null,
+    time: form.time || null,
+    address: form.address || null,
+    listing_url: form.listing_url || null,
+    cost: form.cost ? parseFloat(form.cost) : null,
+    details: form.details,
+  }
+}
+
+// Delete a reservation, cleaning up the hidden "Paid: …" spending_log entry that
+// "Mark paid" creates for hotels (otherwise its cost lingers in the Budget). Shared
+// by the single-delete button and the batch "Replace existing" duplicate resolution.
+async function deleteReservationWithCleanup(res: Reservation, tripId: string) {
+  if (res.type === 'hotel' && res.paid) {
+    const resLabel = res.title || res.provider || 'Hotel'
+    const { error: logErr } = await supabase
+      .from('spending_log')
+      .delete()
+      .eq('trip_id', tripId)
+      .eq('card', 'hotel')
+      .eq('label', `Paid: ${resLabel}`)
+    if (logErr) throw logErr
+  }
+  const { error } = await supabase.from('reservations').delete().eq('id', res.id)
+  if (error) throw error
+}
+
 // ── ReservationCard ────────────────────────────────────────────────────────────
 
 function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => void }) {
@@ -383,21 +446,7 @@ function ParseEmailFlow({
       })
       if (error) throw error
       if (!data?.ok) throw new Error(data?.error ?? 'Unknown error')
-      const json = extractJson(data.text as string)
-      const s = (k: string) => (typeof json[k] === 'string' ? (json[k] as string) : '')
-
-      setParsed({
-        type: (json.type as ReservationType) ?? 'other',
-        title: s('title'),
-        provider: s('provider'),
-        confirmation_number: s('confirmation_number'),
-        date: s('date'),
-        time: s('time'),
-        address: s('address'),
-        cost: json.cost != null ? String(json.cost) : '',
-        listing_url: s('listing_url'),
-        details: (json.details ?? {}) as Json,
-      })
+      setParsed(jsonToForm(extractJson(data.text as string)))
       setStep('review')
     } catch (e) {
       setParseError((e as Error).message ?? 'Unknown error')
@@ -479,103 +528,170 @@ function ParseEmailFlow({
   )
 }
 
-// ── UploadPdfFlow ──────────────────────────────────────────────────────────────
+// ── UploadPdfFlow (multi-file batch) ─────────────────────────────────────────────
 
-type UploadStep = 'pick' | 'uploading' | 'parsing' | 'review' | 'error'
+type UploadStep = 'pick' | 'processing' | 'review' | 'error'
+
+// How a duplicate is resolved when a parsed draft collides with an existing
+// reservation (same type + same date).
+type Resolution = 'replace' | 'keep-both' | 'discard'
+
+// One parsed-but-not-yet-saved reservation in the review batch.
+interface Draft {
+  key: string
+  fileName: string
+  pdfUrl: string
+  form: FormState
+}
+
+// What gets handed back to WalletPage to persist. replaceId set => delete that
+// existing reservation first (the user chose "Replace existing").
+export interface ResolvedDraft {
+  form: FormState
+  pdfUrl: string
+  replaceId: string | null
+}
+
+const MAX_PDF_BYTES = 5 * 1024 * 1024
 
 function UploadPdfFlow({
-  onSave,
+  existing,
+  onSaveBatch,
   onCancel,
   saving,
 }: {
-  onSave: (data: FormState, pdfUrl: string) => void
+  existing: Reservation[]
+  onSaveBatch: (drafts: ResolvedDraft[]) => void
   onCancel: () => void
   saving: boolean
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<UploadStep>('pick')
-  const [parsed, setParsed] = useState<Partial<FormState>>({})
-  const [pdfUrl, setPdfUrl] = useState('')
-  const [error, setError] = useState('')
+  const [drafts, setDrafts] = useState<Draft[]>([])
+  const [resolutions, setResolutions] = useState<Record<string, Resolution>>({})
+  const [errors, setErrors] = useState<string[]>([])
+  const [progress, setProgress] = useState({ done: 0, total: 0, name: '' })
+  const [editingKey, setEditingKey] = useState<string | null>(null)
 
-  async function handleFile(file: File) {
-    setStep('uploading')
-    setError('')
-    try {
-      // Reject oversized PDFs — large multi-page docs blow up token cost.
-      const MAX_PDF_BYTES = 5 * 1024 * 1024
-      if (file.size > MAX_PDF_BYTES) {
-        throw new Error(`PDF is ${(file.size / 1024 / 1024).toFixed(1)} MB. Please upload a file under 5 MB.`)
-      }
-
-      // Read as base64 for Claude
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve((reader.result as string).split(',')[1])
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
-
-      // Upload to Supabase Storage
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Not authenticated')
-      const path = `${user.id}/${Date.now()}_${file.name}`
-      const { error: uploadError } = await supabase.storage
-        .from('reservation-pdfs')
-        .upload(path, file, { contentType: 'application/pdf' })
-      if (uploadError) throw uploadError
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('reservation-pdfs')
-        .getPublicUrl(path)
-      setPdfUrl(publicUrl)
-
-      // Parse with Claude via the edge function
-      setStep('parsing')
-      const { data, error: fnError } = await supabase.functions.invoke('parse-with-claude', {
-        body: { mode: 'pdf', pdfBase64: base64 },
-      })
-      if (fnError) throw fnError
-      if (!data?.ok) throw new Error(data?.error ?? 'Unknown error')
-      const json = extractJson(data.text as string)
-      const s = (k: string) => (typeof json[k] === 'string' ? (json[k] as string) : '')
-
-      setParsed({
-        type: (json.type as ReservationType) ?? 'other',
-        title: s('title'),
-        provider: s('provider'),
-        confirmation_number: s('confirmation_number'),
-        date: s('date'),
-        time: s('time'),
-        address: s('address'),
-        cost: json.cost != null ? String(json.cost) : '',
-        listing_url: s('listing_url'),
-        details: (json.details ?? {}) as Json,
-      })
-      setStep('review')
-    } catch (e) {
-      setError((e as Error).message ?? 'Unknown error')
-      setStep('error')
-    }
+  // A draft duplicates an existing reservation when it shares the same type AND the
+  // same date. No date => can't be sure it's a dupe, so we never block it.
+  function findConflict(form: FormState): Reservation | null {
+    if (!form.date) return null
+    return existing.find((r) => r.type === form.type && r.date === form.date) ?? null
   }
 
+  async function handleFiles(files: File[]) {
+    setStep('processing')
+    setErrors([])
+    const collected: Draft[] = []
+    const errs: string[] = []
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setErrors(['Not authenticated — please log in again.'])
+      setStep('error')
+      return
+    }
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      setProgress({ done: i, total: files.length, name: file.name })
+      try {
+        if (file.size > MAX_PDF_BYTES) {
+          throw new Error(`${(file.size / 1024 / 1024).toFixed(1)} MB — over the 5 MB limit`)
+        }
+        const base64 = await readBase64(file)
+
+        // Upload to Supabase Storage (i in the path keeps same-named files distinct).
+        const path = `${user.id}/${Date.now()}_${i}_${file.name}`
+        const { error: uploadError } = await supabase.storage
+          .from('reservation-pdfs')
+          .upload(path, file, { contentType: 'application/pdf' })
+        if (uploadError) throw uploadError
+        const { data: { publicUrl } } = supabase.storage
+          .from('reservation-pdfs')
+          .getPublicUrl(path)
+
+        // Parse with Claude via the edge function.
+        const { data, error: fnError } = await supabase.functions.invoke('parse-with-claude', {
+          body: { mode: 'pdf', pdfBase64: base64 },
+        })
+        if (fnError) throw fnError
+        if (!data?.ok) throw new Error(data?.error ?? 'Unknown error')
+
+        collected.push({
+          key: `${Date.now()}_${i}`,
+          fileName: file.name,
+          pdfUrl: publicUrl,
+          form: jsonToForm(extractJson(data.text as string)),
+        })
+      } catch (e) {
+        errs.push(`${file.name}: ${(e as Error).message ?? 'Unknown error'}`)
+      }
+    }
+
+    setProgress({ done: files.length, total: files.length, name: '' })
+    setDrafts(collected)
+    setErrors(errs)
+    setStep(collected.length > 0 ? 'review' : 'error')
+  }
+
+  function updateDraft(key: string, form: FormState) {
+    setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, form } : d)))
+  }
+  function removeDraft(key: string) {
+    setDrafts((ds) => ds.filter((d) => d.key !== key))
+  }
+  function setResolution(key: string, r: Resolution) {
+    setResolutions((prev) => ({ ...prev, [key]: r }))
+  }
+
+  function handleSaveAll() {
+    const resolved: ResolvedDraft[] = []
+    for (const d of drafts) {
+      const conflict = findConflict(d.form)
+      const r: Resolution = conflict ? (resolutions[d.key] ?? 'replace') : 'keep-both'
+      if (conflict && r === 'discard') continue
+      resolved.push({
+        form: d.form,
+        pdfUrl: d.pdfUrl,
+        replaceId: conflict && r === 'replace' ? conflict.id : null,
+      })
+    }
+    onSaveBatch(resolved)
+  }
+
+  // How many drafts will actually be saved (discards excluded), for the button label.
+  const savableCount = drafts.reduce((n, d) => {
+    const conflict = findConflict(d.form)
+    const r: Resolution = conflict ? (resolutions[d.key] ?? 'replace') : 'keep-both'
+    return conflict && r === 'discard' ? n : n + 1
+  }, 0)
+
+  // ── pick ──
   if (step === 'pick') {
     return (
       <div className="space-y-4">
-        <p className="font-display text-lg text-forest">Upload Confirmation PDF</p>
+        <p className="font-display text-lg text-forest">Upload Confirmation PDFs</p>
         <p className="text-sm text-forest/60">
-          Upload a PDF of your confirmation email — Claude reads it and fills everything in. The file is saved so you can pull it up offline.
+          Pick one PDF or your whole stack of confirmations at once — Claude reads each one and
+          fills everything in. If any clashes with a reservation you already have, you'll get to
+          choose which to keep. Files are saved so you can pull them up offline.
         </p>
         <input
           ref={fileRef}
           type="file"
           accept="application/pdf"
+          multiple
           className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }}
+          onChange={(e) => {
+            const fs = Array.from(e.target.files ?? [])
+            if (fs.length) handleFiles(fs)
+          }}
         />
         <div className="flex gap-2">
           <button onClick={() => fileRef.current?.click()} className="btn-primary flex-1">
-            📄 Choose PDF
+            📄 Choose PDF(s)
           </button>
           <button onClick={onCancel} className="btn-secondary px-4">Cancel</button>
         </div>
@@ -583,31 +699,31 @@ function UploadPdfFlow({
     )
   }
 
-  if (step === 'uploading') {
-    return (
-      <div className="text-center py-16 space-y-3">
-        <p className="text-3xl animate-pulse">📤</p>
-        <p className="font-display text-lg text-forest">Uploading…</p>
-      </div>
-    )
-  }
-
-  if (step === 'parsing') {
+  // ── processing ──
+  if (step === 'processing') {
     return (
       <div className="text-center py-16 space-y-3">
         <p className="text-3xl animate-pulse">✨</p>
-        <p className="font-display text-lg text-forest">Reading your confirmation…</p>
-        <p className="text-sm text-forest/50">Claude is extracting the details</p>
+        <p className="font-display text-lg text-forest">
+          Reading your confirmations…
+        </p>
+        <p className="text-sm text-forest/50">
+          {progress.total > 0 && `${Math.min(progress.done + 1, progress.total)} of ${progress.total}`}
+          {progress.name && <><br />{progress.name}</>}
+        </p>
       </div>
     )
   }
 
+  // ── error (nothing parsed) ──
   if (step === 'error') {
     return (
       <div className="space-y-4">
-        <p className="font-display text-lg text-forest">Something went wrong</p>
-        <div className="bg-terracotta/10 border border-terracotta/20 rounded-lg p-3">
-          <p className="text-sm text-terracotta">{error}</p>
+        <p className="font-display text-lg text-forest">Nothing could be read</p>
+        <div className="bg-terracotta/10 border border-terracotta/20 rounded-lg p-3 space-y-1">
+          {errors.length === 0
+            ? <p className="text-sm text-terracotta">No reservations were found.</p>
+            : errors.map((e, i) => <p key={i} className="text-sm text-terracotta">{e}</p>)}
         </div>
         <div className="flex gap-2">
           <button onClick={() => setStep('pick')} className="btn-secondary flex-1">Try again</button>
@@ -617,19 +733,114 @@ function UploadPdfFlow({
     )
   }
 
-  // review
+  // ── review ──
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-sage text-sm">✓ Parsed successfully · PDF saved</span>
+    <div className="space-y-4">
+      <p className="font-display text-lg text-forest">
+        Review {drafts.length} reservation{drafts.length === 1 ? '' : 's'}
+      </p>
+
+      {errors.length > 0 && (
+        <div className="bg-terracotta/10 border border-terracotta/20 rounded-lg p-3 space-y-1">
+          <p className="text-xs font-medium text-terracotta">
+            {errors.length} file{errors.length === 1 ? '' : 's'} couldn't be read:
+          </p>
+          {errors.map((e, i) => <p key={i} className="text-xs text-terracotta/80">{e}</p>)}
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {drafts.map((draft) => {
+          if (editingKey === draft.key) {
+            return (
+              <div key={draft.key} className="card">
+                <ReservationForm
+                  title="Edit reservation"
+                  initial={draft.form}
+                  onSave={(form) => { updateDraft(draft.key, form); setEditingKey(null) }}
+                  onCancel={() => setEditingKey(null)}
+                  saving={false}
+                />
+              </div>
+            )
+          }
+
+          const conflict = findConflict(draft.form)
+          const r: Resolution = resolutions[draft.key] ?? 'replace'
+          const f = draft.form
+          const discarded = conflict != null && r === 'discard'
+
+          return (
+            <div key={draft.key} className={`card ${discarded ? 'opacity-50' : ''}`}>
+              <div className="flex items-start gap-3">
+                <span className="text-2xl mt-0.5 shrink-0">{TYPE_ICONS[f.type]}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-forest leading-snug truncate">
+                    {f.title || f.provider || TYPE_LABELS[f.type]}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1">
+                    {f.date && <span className="text-xs text-forest/60">{fmtDate(f.date)}</span>}
+                    {f.time && <span className="text-xs text-forest/60">{fmtTime(f.time)}</span>}
+                    {f.cost && <span className="text-xs font-mono text-gold">${f.cost}</span>}
+                  </div>
+                  <p className="text-[11px] text-forest/40 mt-1 truncate">📄 {draft.fileName}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={() => setEditingKey(draft.key)}
+                    className="text-xs text-sage hover:text-forest transition-colors px-2 py-1">
+                    Edit
+                  </button>
+                  <button onClick={() => removeDraft(draft.key)}
+                    className="text-xs text-terracotta/70 hover:text-terracotta transition-colors px-2 py-1">
+                    Remove
+                  </button>
+                </div>
+              </div>
+
+              {conflict && (
+                <div className="mt-3 bg-gold/10 border border-gold/30 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-forest leading-relaxed">
+                    ⚠️ You already have a {TYPE_LABELS[conflict.type ?? 'other'].toLowerCase()} on{' '}
+                    <b>{fmtDate(conflict.date)}</b>
+                    {(conflict.title || conflict.provider) && <>: <b>{conflict.title || conflict.provider}</b></>}.
+                    What should happen?
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      ['replace', 'Replace existing'],
+                      ['keep-both', 'Keep both'],
+                      ['discard', 'Skip this one'],
+                    ] as [Resolution, string][]).map(([val, label]) => (
+                      <button
+                        key={val}
+                        onClick={() => setResolution(draft.key, val)}
+                        className={`text-xs rounded-full px-3 py-1 border transition-colors ${
+                          r === val
+                            ? 'bg-forest text-cream border-forest'
+                            : 'bg-transparent text-forest/70 border-forest/20 hover:border-forest/40'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
-      <ReservationForm
-        title="Review & save"
-        initial={parsed}
-        onSave={(data) => onSave(data, pdfUrl)}
-        onCancel={onCancel}
-        saving={saving}
-      />
+
+      <div className="flex gap-2">
+        <button
+          onClick={handleSaveAll}
+          disabled={saving || savableCount === 0}
+          className="btn-primary flex-1"
+        >
+          {saving ? 'Saving…' : `Save ${savableCount} to Wallet`}
+        </button>
+        <button onClick={onCancel} className="btn-secondary px-4">Cancel</button>
+      </div>
     </div>
   )
 }
@@ -659,17 +870,7 @@ export default function WalletPage() {
   const saveMutation = useMutation({
     mutationFn: async ({ form, rawEmail, pdfUrl }: { form: FormState; rawEmail?: string; pdfUrl?: string }) => {
       const { error } = await supabase.from('reservations').insert({
-        trip_id: tripId!,
-        type: form.type,
-        title: form.title || null,
-        provider: form.provider || null,
-        confirmation_number: form.confirmation_number || null,
-        date: form.date || null,
-        time: form.time || null,
-        address: form.address || null,
-        listing_url: form.listing_url || null,
-        cost: form.cost ? parseFloat(form.cost) : null,
-        details: form.details,
+        ...reservationRow(form, tripId!),
         raw_email_text: rawEmail ?? null,
         pdf_url: pdfUrl ?? null,
       })
@@ -681,24 +882,32 @@ export default function WalletPage() {
     },
   })
 
-  const deleteMutation = useMutation({
-    mutationFn: async (res: Reservation) => {
-      // If this hotel reservation was marked paid, "Mark paid" created a hidden
-      // spending_log entry (label "Paid: <name>") so the Budget counted it. Remove
-      // that entry too, otherwise its cost lingers in the Budget after delete.
-      if (res.type === 'hotel' && res.paid) {
-        const resLabel = res.title || res.provider || 'Hotel'
-        const { error: logErr } = await supabase
-          .from('spending_log')
-          .delete()
-          .eq('trip_id', tripId!)
-          .eq('card', 'hotel')
-          .eq('label', `Paid: ${resLabel}`)
-        if (logErr) throw logErr
+  // Batch save from the multi-PDF upload flow. For each draft: if the user chose to
+  // replace an existing reservation, delete that one first (with paid-log cleanup),
+  // then insert the new one. Everything is sequential so a mid-batch failure surfaces
+  // a clear error and leaves prior inserts in place.
+  const saveBatchMutation = useMutation({
+    mutationFn: async (drafts: ResolvedDraft[]) => {
+      for (const d of drafts) {
+        if (d.replaceId) {
+          const old = reservations.find((r) => r.id === d.replaceId)
+          if (old) await deleteReservationWithCleanup(old, tripId!)
+        }
+        const { error } = await supabase.from('reservations').insert({
+          ...reservationRow(d.form, tripId!),
+          pdf_url: d.pdfUrl,
+        })
+        if (error) throw error
       }
-      const { error } = await supabase.from('reservations').delete().eq('id', res.id)
-      if (error) throw error
     },
+    onSuccess: () => {
+      invalidateReservationViews(queryClient)
+      setAddMode(null)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (res: Reservation) => deleteReservationWithCleanup(res, tripId!),
     onSuccess: () => invalidateReservationViews(queryClient),
   })
 
@@ -737,8 +946,8 @@ export default function WalletPage() {
             <div className="flex items-start gap-3">
               <span className="text-2xl">📄</span>
               <div>
-                <p className="font-medium text-forest">Upload PDF</p>
-                <p className="text-sm text-forest/50 mt-0.5">Upload your confirmation PDF — Claude reads it, fills everything in, and saves the file for offline access</p>
+                <p className="font-medium text-forest">Upload PDFs</p>
+                <p className="text-sm text-forest/50 mt-0.5">Upload one or many confirmation PDFs at once — Claude reads each, fills everything in, flags duplicates, and saves the files for offline access</p>
               </div>
             </div>
           </button>
@@ -810,15 +1019,16 @@ export default function WalletPage() {
   if (addMode === 'upload') {
     return (
       <div className="p-4 pt-6 pb-10">
-        {saveMutation.isError && (
+        {saveBatchMutation.isError && (
           <p className="text-sm text-terracotta bg-terracotta/10 rounded-lg px-3 py-2 mb-3">
-            {(saveMutation.error as Error).message}
+            {(saveBatchMutation.error as Error).message}
           </p>
         )}
         <UploadPdfFlow
-          onSave={(form, url) => handleSave(form, undefined, url)}
+          existing={reservations}
+          onSaveBatch={(drafts) => saveBatchMutation.mutate(drafts)}
           onCancel={() => setAddMode(null)}
-          saving={saveMutation.isPending}
+          saving={saveBatchMutation.isPending}
         />
       </div>
     )
