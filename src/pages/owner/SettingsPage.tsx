@@ -4,6 +4,7 @@ import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
+import ItineraryExport from '@/components/export/ItineraryExport'
 import type { Budget, Day, Lodging, Activity, Reservation } from '@/types'
 
 // ── Sync types ─────────────────────────────────────────────────────────────────
@@ -783,8 +784,11 @@ export default function SettingsPage() {
           <div className="card">
             <p className="section-label">Export</p>
 
+            {/* Itinerary & meal plan — branded HTML slideshow / PDF */}
+            <ItineraryExport tripId={tripId!} />
+
             {/* Address text file */}
-            <p className="text-sm text-forest/60 mb-2">
+            <p className="text-sm text-forest/60 mb-2 mt-6 pt-4 border-t border-forest/10">
               Download all addresses as a plain-text file organized by day with Google Maps links.
             </p>
             <button
