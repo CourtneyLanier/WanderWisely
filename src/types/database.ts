@@ -122,6 +122,10 @@ type TripDocumentInsert = {
   doc_type?: 'itinerary' | 'side_quest' | 'packing_list' | 'other'
   content?: string
   url?: string | null
+  file_path?: string | null
+  file_name?: string | null
+  file_type?: string | null
+  file_size?: number | null
   sort_order?: number
   created_at?: string
   updated_at?: string
@@ -284,6 +288,10 @@ export interface Database {
           doc_type: 'itinerary' | 'side_quest' | 'packing_list' | 'other'
           content: string
           url: string | null
+          file_path: string | null
+          file_name: string | null
+          file_type: string | null
+          file_size: number | null
           sort_order: number
           created_at: string
           updated_at: string

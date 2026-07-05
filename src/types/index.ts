@@ -142,6 +142,10 @@ export interface TripDocument {
   doc_type: DocType
   content: string
   url: string | null
+  file_path: string | null   // storage path in the 'trip-documents' bucket
+  file_name: string | null   // original filename
+  file_type: string | null   // mime type (application/pdf, image/*)
+  file_size: number | null   // bytes
   sort_order: number
   created_at: string
   updated_at: string

@@ -1,9 +1,33 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
+import {
+  uploadDocFile,
+  removeDocFile,
+  openDocFile,
+  ensureDocFileCached,
+  formatBytes,
+  ACCEPTED_DOC_ACCEPT,
+  ACCEPTED_DOC_MIME,
+  MAX_DOC_FILE_BYTES,
+} from '@/lib/docFiles'
+import { hasCachedDocFile } from '@/lib/docFileCache'
 import type { TripNote, TripDocument, DocType } from '@/types'
+
+// Validate a picked file the same way the uploader does, for early feedback.
+function validateDocFile(file: File): string | null {
+  if (!ACCEPTED_DOC_MIME.includes(file.type)) return 'Choose a PDF, JPG, PNG, or WEBP.'
+  if (file.size > MAX_DOC_FILE_BYTES) return `${(file.size / 1024 / 1024).toFixed(1)} MB — over the 25 MB limit.`
+  return null
+}
+
+function fileIcon(type: string | null): string {
+  if (type?.startsWith('image/')) return '🖼️'
+  if (type === 'application/pdf') return '📕'
+  return '📎'
+}
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -154,22 +178,81 @@ function DocCard({
   const [content, setContent] = useState(doc.content)
   const [url, setUrl] = useState(doc.url ?? '')
 
+  // File state
+  const [newFile, setNewFile] = useState<File | null>(null)
+  const [removeExisting, setRemoveExisting] = useState(false)
+  const [fileErr, setFileErr] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Offline availability + open state
+  const [offlineReady, setOfflineReady] = useState<boolean | null>(null)
+  const [opening, setOpening] = useState(false)
+  const [openErr, setOpenErr] = useState('')
+
+  useEffect(() => {
+    let active = true
+    if (doc.file_path) {
+      hasCachedDocFile(doc.id).then((v) => { if (active) setOfflineReady(v) })
+    } else {
+      setOfflineReady(null)
+    }
+    return () => { active = false }
+  }, [doc.id, doc.file_path])
+
+  async function handleView() {
+    setOpening(true)
+    setOpenErr('')
+    const err = await openDocFile(doc)
+    if (err) setOpenErr(err)
+    else setOfflineReady(true)
+    setOpening(false)
+  }
+
+  function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const v = validateDocFile(f)
+    if (v) { setFileErr(v); return }
+    setFileErr('')
+    setNewFile(f)
+    setRemoveExisting(false)
+  }
+
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase
-        .from('trip_documents')
-        .update({
-          title: title.trim() || 'Document',
-          doc_type: docType,
-          content,
-          url: url.trim() || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', doc.id)
+      const payload: {
+        title: string
+        doc_type: DocType
+        content: string
+        url: string | null
+        updated_at: string
+        file_path?: string | null
+        file_name?: string | null
+        file_type?: string | null
+        file_size?: number | null
+      } = {
+        title: title.trim() || 'Document',
+        doc_type: docType,
+        content,
+        url: url.trim() || null,
+        updated_at: new Date().toISOString(),
+      }
+      // Replace: upload new file first, then point the row at it.
+      if (newFile) {
+        if (doc.file_path) await removeDocFile(doc)
+        const meta = await uploadDocFile(doc.id, newFile)
+        Object.assign(payload, meta)
+      } else if (removeExisting && doc.file_path) {
+        await removeDocFile(doc)
+        Object.assign(payload, { file_path: null, file_name: null, file_type: null, file_size: null })
+      }
+      const { error } = await supabase.from('trip_documents').update(payload).eq('id', doc.id)
       if (error) throw error
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trip_documents'] })
+      setNewFile(null)
+      setRemoveExisting(false)
       setEditing(false)
     },
   })
@@ -179,6 +262,10 @@ function DocCard({
     setDocType(doc.doc_type)
     setContent(doc.content)
     setUrl(doc.url ?? '')
+    setNewFile(null)
+    setRemoveExisting(false)
+    setFileErr('')
+    if (fileRef.current) fileRef.current.value = ''
     setEditing(false)
   }
 
@@ -228,6 +315,54 @@ function DocCard({
             className="input text-sm"
           />
         </div>
+        <div>
+          <label className="block text-sm text-forest mb-1">File (PDF or image)</label>
+          <input
+            ref={fileRef}
+            type="file"
+            accept={ACCEPTED_DOC_ACCEPT}
+            onChange={pickFile}
+            className="hidden"
+          />
+          {newFile ? (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-forest truncate">📎 {newFile.name}</span>
+              <span className="text-forest/40 text-xs shrink-0">{formatBytes(newFile.size)}</span>
+              <button
+                onClick={() => { setNewFile(null); if (fileRef.current) fileRef.current.value = '' }}
+                className="text-xs text-terracotta hover:text-forest transition-colors ml-auto shrink-0"
+              >
+                Clear
+              </button>
+            </div>
+          ) : doc.file_path && !removeExisting ? (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-forest truncate">{fileIcon(doc.file_type)} {doc.file_name}</span>
+              <div className="flex gap-3 ml-auto shrink-0">
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="text-xs text-sage hover:text-forest transition-colors"
+                >
+                  Replace
+                </button>
+                <button
+                  onClick={() => setRemoveExisting(true)}
+                  className="text-xs text-terracotta hover:text-forest transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="btn-secondary w-full text-sm"
+            >
+              {removeExisting ? 'Choose a replacement file' : '📎 Attach a file'}
+            </button>
+          )}
+          {fileErr && <p className="text-xs text-terracotta mt-1">{fileErr}</p>}
+        </div>
         <div className="flex gap-2 pt-1">
           <button
             onClick={() => saveMutation.mutate()}
@@ -254,7 +389,12 @@ function DocCard({
         <span className="text-xl mt-0.5 shrink-0">{DOC_TYPE_ICONS[doc.doc_type]}</span>
         <div className="flex-1 min-w-0">
           <p className="font-medium text-forest leading-snug truncate">{doc.title}</p>
-          <p className="text-xs text-forest/40 mt-0.5">{DOC_TYPE_LABELS[doc.doc_type]}</p>
+          <p className="text-xs text-forest/40 mt-0.5">
+            {DOC_TYPE_LABELS[doc.doc_type]}
+            {doc.file_path && (
+              <span className="ml-1.5 text-deep-teal">· {fileIcon(doc.file_type)} file</span>
+            )}
+          </p>
           {!expanded && doc.content && (
             <p className="text-xs text-forest/50 mt-0.5 truncate">{doc.content}</p>
           )}
@@ -294,6 +434,27 @@ function DocCard({
               Open link
             </a>
           )}
+          {doc.file_path && (
+            <div className="card-inset flex items-center gap-3">
+              <span className="text-2xl shrink-0">{fileIcon(doc.file_type)}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-forest truncate">{doc.file_name}</p>
+                <p className="text-[11px] text-forest/45 mt-0.5">
+                  {formatBytes(doc.file_size)}
+                  {offlineReady === true && <span className="text-sage"> · ✓ Saved offline</span>}
+                  {offlineReady === false && <span className="text-gold"> · Not offline yet</span>}
+                </p>
+              </div>
+              <button
+                onClick={handleView}
+                disabled={opening}
+                className="btn-primary text-sm px-3 py-1.5 shrink-0"
+              >
+                {opening ? 'Opening…' : 'View'}
+              </button>
+            </div>
+          )}
+          {openErr && <p className="text-xs text-terracotta">{openErr}</p>}
           <button
             onClick={onDelete}
             className="text-xs text-terracotta hover:text-forest transition-colors"
@@ -371,17 +532,43 @@ function AddDocForm({ tripId, onDone }: { tripId: string; onDone: () => void }) 
   const [docType, setDocType] = useState<DocType>('other')
   const [content, setContent] = useState('')
   const [url, setUrl] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [fileErr, setFileErr] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const v = validateDocFile(f)
+    if (v) { setFileErr(v); return }
+    setFileErr('')
+    setFile(f)
+  }
 
   const addMutation = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from('trip_documents').insert({
-        trip_id: tripId,
-        title: title.trim(),
-        doc_type: docType,
-        content,
-        url: url.trim() || null,
-      })
+      // Insert first so we have the document id to key the file's storage path.
+      const { data: inserted, error } = await supabase
+        .from('trip_documents')
+        .insert({
+          trip_id: tripId,
+          title: title.trim(),
+          doc_type: docType,
+          content,
+          url: url.trim() || null,
+        })
+        .select()
+        .single()
       if (error) throw error
+
+      if (file) {
+        const meta = await uploadDocFile(inserted.id, file)
+        const { error: upErr } = await supabase
+          .from('trip_documents')
+          .update(meta)
+          .eq('id', inserted.id)
+        if (upErr) throw upErr
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trip_documents', tripId] })
@@ -434,6 +621,34 @@ function AddDocForm({ tripId, onDone }: { tripId: string; onDone: () => void }) 
           placeholder="https://…"
           className="input text-sm"
         />
+      </div>
+      <div>
+        <label className="block text-sm text-forest mb-1">File (optional — PDF or image)</label>
+        <input
+          ref={fileRef}
+          type="file"
+          accept={ACCEPTED_DOC_ACCEPT}
+          onChange={pickFile}
+          className="hidden"
+        />
+        {file ? (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-forest truncate">📎 {file.name}</span>
+            <span className="text-forest/40 text-xs shrink-0">{formatBytes(file.size)}</span>
+            <button
+              onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = '' }}
+              className="text-xs text-terracotta hover:text-forest transition-colors ml-auto shrink-0"
+            >
+              Clear
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => fileRef.current?.click()} className="btn-secondary w-full text-sm">
+            📎 Attach a file
+          </button>
+        )}
+        <p className="text-[11px] text-forest/40 mt-1">Saved for offline use, so maps open with no signal.</p>
+        {fileErr && <p className="text-xs text-terracotta mt-1">{fileErr}</p>}
       </div>
       <div className="flex gap-2 pt-1">
         <button
@@ -504,12 +719,30 @@ export default function NotesPage() {
   })
 
   const deleteDocMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('trip_documents').delete().eq('id', id)
+    mutationFn: async (doc: TripDocument) => {
+      // Clean up the attached file (Storage + local cache) before the row.
+      if (doc.file_path) await removeDocFile(doc)
+      const { error } = await supabase.from('trip_documents').delete().eq('id', doc.id)
       if (error) throw error
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trip_documents', tripId] }),
   })
+
+  // Background prefetch: once documents load (and we're online), download any
+  // attached files that aren't cached yet so they're ready offline.
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    const withFiles = docs.filter((d) => d.file_path)
+    if (withFiles.length === 0) return
+    let cancelled = false
+    ;(async () => {
+      for (const d of withFiles) {
+        if (cancelled) break
+        await ensureDocFileCached(d)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [docs])
 
   if (!trip || !tripId) {
     return (
@@ -619,7 +852,7 @@ export default function NotesPage() {
               <p className="text-3xl">🗂️</p>
               <p className="font-medium text-forest">No documents yet</p>
               <p className="text-sm text-forest/50">
-                Store itineraries, side-quest ideas,<br />packing lists, and other trip documents.
+                Store itineraries, packing lists, and trip docs —<br />or attach a PDF/image map that opens offline.
               </p>
               <button onClick={() => setAdding(true)} className="btn-primary mt-2">
                 + Add document
@@ -633,7 +866,7 @@ export default function NotesPage() {
                   key={doc.id}
                   doc={doc}
                   onDelete={() => {
-                    if (confirm('Delete this document?')) deleteDocMutation.mutate(doc.id)
+                    if (confirm('Delete this document?')) deleteDocMutation.mutate(doc)
                   }}
                 />
               ))}
