@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
 import ItineraryExport from '@/components/export/ItineraryExport'
-import type { Budget, Day, Lodging, Activity, Reservation } from '@/types'
+import type { Budget, Day, Lodging, Activity, Reservation, Trip } from '@/types'
 
 // ── Sync types ─────────────────────────────────────────────────────────────────
 
@@ -72,6 +72,13 @@ export default function SettingsPage() {
   const [exporting, setExporting] = useState(false)
   const [exportingGpx, setExportingGpx] = useState(false)
   const [savingShare, setSavingShare] = useState(false)
+
+  // Per-tab guest sharing flags (saved immediately, like the share switch)
+  const [shareTabs, setShareTabs] = useState({
+    share_days: true, share_route: true, share_wallet: false,
+    share_budget: false, share_notes: false, share_map: false,
+  })
+  const [savingTab, setSavingTab] = useState<string | null>(null)
 
   // Sync from Wallet state
   const [buildingPreview, setBuildingPreview] = useState(false)
@@ -476,7 +483,30 @@ export default function SettingsPage() {
     setStartDate(trip.start_date ?? '')
     setEndDate(trip.end_date ?? '')
     setShareEnabled(trip.share_enabled)
+    setShareTabs({
+      share_days: trip.share_days ?? true,
+      share_route: trip.share_route ?? true,
+      share_wallet: trip.share_wallet ?? false,
+      share_budget: trip.share_budget ?? false,
+      share_notes: trip.share_notes ?? false,
+      share_map: trip.share_map ?? false,
+    })
   }, [trip])
+
+  async function toggleShareTab(key: keyof typeof shareTabs) {
+    if (!trip) return
+    const next = !shareTabs[key]
+    setShareTabs((prev) => ({ ...prev, [key]: next }))
+    setSavingTab(key)
+    try {
+      // key is constrained to the share-flag keys, so this cast is safe.
+      const patch = { [key]: next } as Partial<Pick<Trip, keyof typeof shareTabs>>
+      await supabase.from('trips').update(patch).eq('id', trip.id)
+      queryClient.invalidateQueries({ queryKey: ['trip'] })
+    } finally {
+      setSavingTab(null)
+    }
+  }
 
   useEffect(() => {
     if (!budget) return
@@ -859,6 +889,43 @@ export default function SettingsPage() {
               />
             </button>
           </div>
+          {/* Per-tab sharing — what guests can see on THIS trip */}
+          {shareEnabled && (
+            <div className="mb-4 pt-3 border-t border-forest/10">
+              <p className="text-xs text-forest/50 mb-2">
+                Choose what guests see on this trip. Money is never shared unless you turn on Budget.
+              </p>
+              <div className="space-y-1">
+                {([
+                  { key: 'share_days',   icon: '📅', label: 'Days',   note: 'daily plans, lodging, meals' },
+                  { key: 'share_route',  icon: '🧭', label: 'Route',  note: 'drive legs and stops' },
+                  { key: 'share_wallet', icon: '💳', label: 'Wallet', note: 'reservations — never costs' },
+                  { key: 'share_budget', icon: '💰', label: 'Budget', note: 'budget totals and spending' },
+                  { key: 'share_notes',  icon: '📝', label: 'Notes',  note: 'notes + document text/links' },
+                  { key: 'share_map',    icon: '🗺️', label: 'Map',    note: 'states visited' },
+                ] as { key: keyof typeof shareTabs; icon: string; label: string; note: string }[]).map(
+                  ({ key, icon, label, note }) => (
+                    <label
+                      key={key}
+                      className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-cream cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={shareTabs[key]}
+                        disabled={savingTab === key}
+                        onChange={() => toggleShareTab(key)}
+                        className="accent-sage w-4 h-4 shrink-0"
+                      />
+                      <span className="text-base shrink-0">{icon}</span>
+                      <span className="text-sm text-forest font-medium shrink-0">{label}</span>
+                      <span className="text-xs text-forest/40 truncate">{note}</span>
+                    </label>
+                  )
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
             <p className="text-xs text-forest/50 break-all font-mono">{guestLink}</p>
             <button onClick={copyLink} className="btn-secondary w-full text-sm">

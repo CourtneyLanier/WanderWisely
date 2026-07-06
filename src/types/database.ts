@@ -14,6 +14,12 @@ type TripInsert = {
   num_days?: number | null
   share_code?: string
   share_enabled?: boolean
+  share_days?: boolean
+  share_route?: boolean
+  share_wallet?: boolean
+  share_budget?: boolean
+  share_notes?: boolean
+  share_map?: boolean
   created_at?: string
 }
 
@@ -148,6 +154,12 @@ export interface Database {
           num_days: number | null
           share_code: string
           share_enabled: boolean
+          share_days: boolean
+          share_route: boolean
+          share_wallet: boolean
+          share_budget: boolean
+          share_notes: boolean
+          share_map: boolean
           created_at: string
         }
         Insert: TripInsert
@@ -314,6 +326,48 @@ export interface Database {
           share_code: string
           share_enabled: boolean
           created_at: string
+          share_days: boolean
+          share_route: boolean
+          share_wallet: boolean
+          share_budget: boolean
+          share_notes: boolean
+          share_map: boolean
+        }[]
+      }
+      guest_get_notes: {
+        Args: { p_share_code: string }
+        Returns: {
+          id: string
+          title: string
+          content: string
+          sort_order: number
+        }[]
+      }
+      guest_get_documents: {
+        Args: { p_share_code: string }
+        Returns: {
+          id: string
+          title: string
+          doc_type: string
+          content: string
+          url: string | null
+          sort_order: number
+        }[]
+      }
+      guest_get_budget: {
+        Args: { p_share_code: string }
+        Returns: {
+          food_total: number
+          food_days: number
+          hotel_buffer: number
+          car_total_budget: number
+        }[]
+      }
+      guest_get_spending_summary: {
+        Args: { p_share_code: string }
+        Returns: {
+          card: string
+          spent: number
         }[]
       }
       guest_get_days: {

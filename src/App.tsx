@@ -18,6 +18,10 @@ import GuestLayout from '@/pages/guest/GuestLayout'
 import GuestHomePage from '@/pages/guest/GuestHomePage'
 import GuestDaysPage from '@/pages/guest/GuestDaysPage'
 import GuestRoutePage from '@/pages/guest/GuestRoutePage'
+import GuestWalletPage from '@/pages/guest/GuestWalletPage'
+import GuestBudgetPage from '@/pages/guest/GuestBudgetPage'
+import GuestNotesPage from '@/pages/guest/GuestNotesPage'
+import GuestMapPage from '@/pages/guest/GuestMapPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import { useAppStore } from '@/store/useAppStore'
 import { supabase } from '@/lib/supabase'
@@ -80,6 +84,10 @@ export default function App() {
           <Route index element={<GuestHomePage />} />
           <Route path="days" element={<GuestDaysPage />} />
           <Route path="route" element={<GuestRoutePage />} />
+          <Route path="wallet" element={<GuestWalletPage />} />
+          <Route path="budget" element={<GuestBudgetPage />} />
+          <Route path="notes" element={<GuestNotesPage />} />
+          <Route path="map" element={<GuestMapPage />} />
         </Route>
 
         {/* Owner app — auth required */}

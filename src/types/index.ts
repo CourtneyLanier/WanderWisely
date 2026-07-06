@@ -15,6 +15,12 @@ export interface Trip {
   num_days: number | null
   share_code: string
   share_enabled: boolean
+  share_days: boolean     // per-tab guest sharing (migration 009)
+  share_route: boolean
+  share_wallet: boolean
+  share_budget: boolean
+  share_notes: boolean
+  share_map: boolean
   created_at: string
 }
 
