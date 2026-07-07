@@ -50,6 +50,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // The lazy-loaded pdf.js chunk + worker are ~1MB each; make sure they
+        // still land in the precache so attached PDFs open offline.
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallback: 'index.html',
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [

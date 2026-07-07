@@ -38,6 +38,7 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
   const [content, setContent] = useState<ExportContent>('combined')
   const [mealStyle, setMealStyle] = useState<MealStyle>('by_day')
   const [includePrices, setIncludePrices] = useState(false)
+  const [includeFiles, setIncludeFiles] = useState(true)
   const [busy, setBusy] = useState<null | 'html' | 'pdf'>(null)
   const [error, setError] = useState('')
 
@@ -50,8 +51,8 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
     setBusy(kind)
     setError('')
     try {
-      const data = await gatherExportData(tripId)
-      const opts = { content, mealStyle, includePrices }
+      const data = await gatherExportData(tripId, includeFiles)
+      const opts = { content, mealStyle, includePrices, includeFiles }
       if (kind === 'html') {
         const html = buildExportHtml(data, opts, false)
         downloadHtml(html, `${safeFileName(data.trip.name)}_${fileSuffix}.html`)
@@ -102,6 +103,31 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
           </div>
         </>
       )}
+
+      {/* Attached files toggle */}
+      <label className="flex items-center justify-between mb-3 cursor-pointer">
+        <span className="text-sm text-forest">
+          Include attached files
+          <span className="block text-[11px] text-forest/45">
+            Embeds Notes-tab PDFs &amp; images so they open offline (larger file)
+          </span>
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={includeFiles}
+          onClick={() => setIncludeFiles((v) => !v)}
+          className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+            includeFiles ? 'bg-sage' : 'bg-forest/20'
+          }`}
+        >
+          <span
+            className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+              includeFiles ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </label>
 
       {/* Prices toggle */}
       <label className="flex items-center justify-between mb-4 cursor-pointer">

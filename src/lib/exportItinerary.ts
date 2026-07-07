@@ -7,7 +7,8 @@
 // Branded with the round WanderWisely logo only. Never references 3Strand.
 
 import { supabase } from '@/lib/supabase'
-import type { Trip, Day, Lodging, Activity, Reservation, MealSlot } from '@/types'
+import { getDocFileBlob } from '@/lib/docFiles'
+import type { Trip, Day, Lodging, Activity, Reservation, MealSlot, TripDocument } from '@/types'
 
 // ─── Options ─────────────────────────────────────────────────────────────────
 
@@ -20,9 +21,20 @@ export interface ExportOptions {
   content: ExportContent
   mealStyle: MealStyle
   includePrices: boolean
+  /** Embed files attached to trip documents (PDFs/images) into the export. */
+  includeFiles: boolean
 }
 
 // ─── Gathered data ───────────────────────────────────────────────────────────
+
+/** A document's attached file, embedded as base64 so the export is self-contained. */
+export interface ExportDocFile {
+  title: string
+  fileName: string
+  fileType: string
+  fileSize: number
+  base64: string
+}
 
 export interface ExportData {
   trip: Trip
@@ -31,6 +43,9 @@ export interface ExportData {
   activitiesByDay: Record<string, Activity[]>
   reservationsByDate: Record<string, Reservation[]>
   logoDataUri: string | null
+  docFiles: ExportDocFile[]
+  /** Titles of attached files that could not be loaded for embedding. */
+  docFilesMissing: string[]
 }
 
 // ─── Small helpers ───────────────────────────────────────────────────────────
@@ -115,7 +130,48 @@ async function loadLogoDataUri(): Promise<string | null> {
 
 // ─── Data gathering ──────────────────────────────────────────────────────────
 
-export async function gatherExportData(tripId: string): Promise<ExportData> {
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve((reader.result as string).split(',')[1] ?? '')
+    reader.onerror = () => reject(new Error('Could not read file.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+/** Load every attached document file (local cache first) and base64-encode it. */
+async function gatherDocFiles(
+  tripId: string
+): Promise<{ docFiles: ExportDocFile[]; docFilesMissing: string[] }> {
+  const { data, error } = await supabase
+    .from('trip_documents')
+    .select('*')
+    .eq('trip_id', tripId)
+    .not('file_path', 'is', null)
+    .order('sort_order')
+    .order('created_at')
+  if (error) throw error
+
+  const docFiles: ExportDocFile[] = []
+  const docFilesMissing: string[] = []
+  for (const doc of (data ?? []) as TripDocument[]) {
+    try {
+      const file = await getDocFileBlob(doc)
+      docFiles.push({
+        title: doc.title,
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: doc.file_size ?? file.blob.size,
+        base64: await blobToBase64(file.blob),
+      })
+    } catch {
+      docFilesMissing.push(`${doc.title} (${doc.file_name ?? 'file'})`)
+    }
+  }
+  return { docFiles, docFilesMissing }
+}
+
+export async function gatherExportData(tripId: string, includeFiles = false): Promise<ExportData> {
   const [tripRes, daysRes, reservationsRes] = await Promise.all([
     supabase.from('trips').select('*').eq('id', tripId).single(),
     supabase.from('days').select('*').eq('trip_id', tripId).order('day_number'),
@@ -152,7 +208,14 @@ export async function gatherExportData(tripId: string): Promise<ExportData> {
 
   const logoDataUri = await loadLogoDataUri()
 
-  return { trip, days, lodgingByDay, activitiesByDay, reservationsByDate, logoDataUri }
+  const { docFiles, docFilesMissing } = includeFiles
+    ? await gatherDocFiles(tripId)
+    : { docFiles: [], docFilesMissing: [] }
+
+  return {
+    trip, days, lodgingByDay, activitiesByDay, reservationsByDate,
+    logoDataUri, docFiles, docFilesMissing,
+  }
 }
 
 // ─── Meal helpers ────────────────────────────────────────────────────────────
@@ -423,6 +486,88 @@ function emptyMealSlide(data: ExportData): string {
   </section>`
 }
 
+// ─── Attached-file slides ────────────────────────────────────────────────────
+
+function fmtFileSize(n: number): string {
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
+ * Slides for files attached to trip documents. Images get a full slide each
+ * (they print too). PDFs are embedded as base64 and listed on one slide with
+ * tap-to-open links — everything travels inside this single HTML file, so it
+ * all works with no signal.
+ */
+function attachmentSlides(data: ExportData): string {
+  const images = data.docFiles.filter((f) => f.fileType.startsWith('image/'))
+  const pdfs = data.docFiles.filter((f) => f.fileType === 'application/pdf')
+  const slides: string[] = []
+
+  for (const img of images) {
+    slides.push(`<section class="slide attachment">
+      ${brandbar(data)}
+      <div class="slide-inner">
+        <div class="day-head">
+          <span class="day-badge">📎 Attached</span>
+          <span class="day-date">${esc(img.title)}</span>
+        </div>
+        <img class="attach-img" src="data:${esc(img.fileType)};base64,${img.base64}" alt="${esc(img.title)}" />
+      </div>
+    </section>`)
+  }
+
+  if (pdfs.length || data.docFilesMissing.length) {
+    const items = pdfs.map((f) => `<div class="item">
+      <span class="item-icon">📕</span>
+      <div class="item-body">
+        <div class="item-top"><span class="item-slot">PDF · ${esc(fmtFileSize(f.fileSize))}</span></div>
+        <p class="item-name">${esc(f.title)}</p>
+        <div class="item-meta"><span>${esc(f.fileName)}</span></div>
+      </div>
+      <a class="attach-btn no-print" data-embed download="${esc(f.fileName)}" href="data:application/pdf;base64,${f.base64}">Open</a>
+    </div>`).join('')
+
+    const missing = data.docFilesMissing.length
+      ? `<p class="attach-missing">Couldn't be included: ${esc(data.docFilesMissing.join(', '))}. Open them once in the app while online, then export again.</p>`
+      : ''
+
+    slides.push(`<section class="slide attachments">
+      ${brandbar(data)}
+      <div class="slide-inner">
+        <div class="day-head"><span class="day-badge">📎 Attached documents</span></div>
+        ${pdfs.length ? `<div class="block">${items}</div>
+        <p class="attach-note no-print">These PDFs are stored inside this file — tap Open to view or save them, even with no signal.</p>
+        <p class="attach-note print-only">PDF attachments travel inside the HTML version of this export — open it in a browser to view them.</p>` : ''}
+        ${missing}
+      </div>
+    </section>`)
+  }
+
+  return slides.join('')
+}
+
+// Turns each embedded data: link into a blob: URL at load time — data: links
+// are blocked as top-frame navigations in some browsers (e.g. Chrome), while
+// blob: links open/download reliably. Base64 never contains '<', so embedding
+// it in markup/script is safe.
+const ATTACH_SCRIPT = `
+(function(){
+  [].slice.call(document.querySelectorAll('a[data-embed]')).forEach(function(a){
+    try{
+      var href=a.getAttribute('href')||'';
+      var comma=href.indexOf('base64,');
+      if(href.indexOf('data:')!==0||comma<0)return;
+      var type=href.slice(5,href.indexOf(';'));
+      var bin=atob(href.slice(comma+7));
+      var arr=new Uint8Array(bin.length);
+      for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+      a.href=URL.createObjectURL(new Blob([arr],{type:type}));
+    }catch(e){}
+  });
+})();
+`
+
 // ─── Document assembly ───────────────────────────────────────────────────────
 
 const STYLES = `
@@ -510,6 +655,16 @@ a{color:var(--deep-teal);text-decoration:none}
   font-size:13px;color:rgba(45,61,30,.6)}
 .item-meta .dot{color:rgba(45,61,30,.3)}
 .notes-text{font-size:14px;color:rgba(45,61,30,.7);font-style:italic;white-space:pre-wrap}
+/* Attached files */
+.attach-img{display:block;max-width:100%;height:auto;margin-top:16px;border-radius:14px;
+  box-shadow:0 2px 10px rgba(45,61,30,.18)}
+.attach-btn{align-self:center;flex:0 0 auto;background:var(--deep-teal);color:#fff;
+  font-size:13px;font-weight:600;border-radius:9px;padding:8px 16px;
+  box-shadow:0 1px 4px rgba(45,61,30,.25)}
+.attach-btn:active{background:var(--forest)}
+.attach-note{margin-top:12px;font-size:12px;color:rgba(45,61,30,.5)}
+.attach-missing{margin-top:12px;font-size:12px;color:var(--terracotta)}
+.print-only{display:none}
 /* Slideshow controls */
 .controls{position:fixed;bottom:0;left:0;right:0;display:flex;align-items:center;
   justify-content:center;gap:20px;padding:14px;
@@ -534,6 +689,8 @@ a{color:var(--deep-teal);text-decoration:none}
     page-break-after:always;padding:0.35in 0.5in}
   .slide:last-child{page-break-after:auto}
   .block{break-inside:avoid}
+  .print-only{display:block}
+  .attach-img{box-shadow:none;max-height:9in}
   .cover{min-height:9in;justify-content:center}
   a{color:var(--forest)}
   @page{margin:0.4in}
@@ -597,6 +754,9 @@ export function buildExportHtml(data: ExportData, opts: ExportOptions, autoPrint
       ? mealPlanByTypeSlides(data, opts)
       : mealPlanByDaySlides(data, opts))
   }
+  const hasAttachments =
+    opts.includeFiles && (data.docFiles.length > 0 || data.docFilesMissing.length > 0)
+  if (hasAttachments) slides.push(attachmentSlides(data))
 
   const titleSuffix = opts.content === 'meal_plan' ? 'Meal Plan'
     : opts.content === 'combined' ? 'Itinerary & Meal Plan' : 'Itinerary'
@@ -626,7 +786,7 @@ export function buildExportHtml(data: ExportData, opts: ExportOptions, autoPrint
   <span class="counter" id="counter">1 / 1</span>
   <button id="next" aria-label="Next">›</button>
 </div>
-<script>${SLIDESHOW_SCRIPT}${autoPrint ? AUTOPRINT_SCRIPT : ''}</script>
+<script>${SLIDESHOW_SCRIPT}${hasAttachments ? ATTACH_SCRIPT : ''}${autoPrint ? AUTOPRINT_SCRIPT : ''}</script>
 </body>
 </html>`
 }
