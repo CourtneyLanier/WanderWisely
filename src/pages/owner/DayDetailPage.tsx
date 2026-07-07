@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
+import SuggestStopsSection from '@/components/days/SuggestStopsSection'
 import type { Day, Lodging, Activity, LodgingType, ActivityType, MealSlot, Reservation } from '@/types'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -1214,6 +1215,14 @@ export default function DayDetailPage() {
       <DayHeader day={day} />
       <LodgingSection dayId={day.id} tripId={tripId} date={day.date} />
       <ActivitiesSection dayId={day.id} />
+      {day.start_location && day.end_location && day.start_location !== day.end_location && (
+        <SuggestStopsSection
+          dayId={day.id}
+          from={day.start_location}
+          to={day.end_location}
+          date={day.date}
+        />
+      )}
       {tripId && <WalletSection tripId={tripId} date={day.date} />}
     </div>
   )

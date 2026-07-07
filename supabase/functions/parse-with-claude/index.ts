@@ -7,6 +7,7 @@
 //   { mode: 'email',   text: string }
 //   { mode: 'pdf',     pdfBase64: string }
 //   { mode: 'receipt', imageBase64: string, mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' }
+//   { mode: 'stops',   from: string, to: string, date?: string }
 //
 // Response (always HTTP 200, envelope tells the frontend what happened):
 //   { ok: true,  text: string }      // raw text from Claude — frontend parses JSON out of it
@@ -70,6 +71,22 @@ date: extract the transaction date from the receipt if visible (format YYYY-MM-D
 
 If a field cannot be determined, use null.`
 
+const STOPS_SYSTEM = `You are a road-trip scout for a family travel app. Given a driving route, find genuinely interesting stops along or near it: quirky roadside attractions, beloved local restaurants and diners, great local coffee shops, farm stands, scenic pull-offs, and one-of-a-kind local shops.
+
+Use web search to make sure the places are real and currently open — do NOT include anything that is permanently closed, and prefer well-loved local gems over national chains. Everything must be family-friendly. Be fast: run at most 3 quick searches, then answer immediately from what you found plus what you already know.
+
+Return ONLY a valid JSON array (no preamble, no markdown fences) of 6 to 8 stops, ordered from the start of the drive to the end, with a mix of categories:
+[
+  {
+    "name": "string",
+    "category": "quirky" | "food" | "coffee" | "scenic" | "shop" | "attraction",
+    "location": "Town, ST",
+    "description": "1-2 sentences on what it is and why it's worth the stop",
+    "detour": "how far off the route it is, e.g. 'right on US-89' or 'about 10 min off the highway'",
+    "address": "street address if known, otherwise null"
+  }
+]`
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -104,6 +121,78 @@ Deno.serve(async (req) => {
   }
 
   const mode = body.mode as string
+
+  // ── 'stops' mode: suggest stops along a driving route, grounded via web search.
+  // Handled separately because server-side tools interleave search-result blocks
+  // with text and can pause mid-turn (stop_reason 'pause_turn').
+  if (mode === 'stops') {
+    const from = body.from as string
+    const to = body.to as string
+    if (!from || !to || typeof from !== 'string' || typeof to !== 'string') {
+      return ok({ ok: false, error: 'Missing route (from/to)' })
+    }
+    const date = typeof body.date === 'string' ? body.date : null
+
+    const userText =
+      `Driving route: from ${from} to ${to}.` +
+      (date ? ` Travel date: ${date} — skip anything that would be closed then (seasonal closures, day of week).` : '')
+
+    const messages: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: userText },
+    ]
+
+    // Server-side tool loops can return 'pause_turn'; re-send to let Claude resume.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let res: Response
+      try {
+        res = await fetch(ANTHROPIC_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            // Sonnet, not Opus: the edge worker has a hard 150s wall clock, and
+            // Opus + web search reliably blows past it. Sonnet fits comfortably.
+            model: SONNET,
+            max_tokens: 3000,
+            system: STOPS_SYSTEM,
+            messages,
+            tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
+          }),
+        })
+      } catch (e) {
+        return ok({ ok: false, error: `Network error calling Anthropic: ${(e as Error).message}` })
+      }
+
+      const data = await res.json().catch(() => null) as
+        | {
+            content?: Array<{ type?: string; text?: string }>
+            stop_reason?: string
+            error?: { message?: string }
+          }
+        | null
+
+      if (!res.ok) {
+        return ok({ ok: false, error: data?.error?.message ?? `Anthropic returned ${res.status}` })
+      }
+
+      if (data?.stop_reason === 'pause_turn' && data.content) {
+        // Resume where the server-side tool loop left off.
+        messages.push({ role: 'assistant', content: data.content })
+        continue
+      }
+
+      const text = (data?.content ?? [])
+        .filter((b) => b.type === 'text' && b.text)
+        .map((b) => b.text)
+        .join('\n')
+      if (!text) return ok({ ok: false, error: 'Empty response from Claude' })
+      return ok({ ok: true, text })
+    }
+    return ok({ ok: false, error: 'The search took too long — please try again.' })
+  }
 
   let payload: AnthropicPayload
   if (mode === 'email') {
