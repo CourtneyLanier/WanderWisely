@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { ALL_STATES, STATE_MAP, detectStates } from '@/lib/usStates'
+import UsaStatesMap from '@/components/map/UsaStatesMap'
+import StateFactsCard from '@/components/map/StateFactsCard'
 
 // Guest read-only Map tab: states auto-detected from the trip's shared
 // locations. (The owner's manually-added states live in their browser only.)
@@ -13,6 +16,7 @@ interface GDay {
 
 export default function GuestMapPage() {
   const { shareCode } = useParams<{ shareCode: string }>()
+  const [selected, setSelected] = useState<string | null>(null)
 
   const { data: days = [], isLoading } = useQuery({
     queryKey: ['guest_days', shareCode],
@@ -46,8 +50,31 @@ export default function GuestMapPage() {
     <div className="p-4 pt-6 pb-10">
       <h1 className="font-display text-2xl text-forest mb-1">States</h1>
       <p className="text-sm text-forest/50 mb-4">
-        States this trip passes through, from the shared route.
+        States this trip passes through, from the shared route. Tap a state for its story.
       </p>
+
+      {/* ── The map ── */}
+      <div className="card mb-4">
+        <UsaStatesMap visited={visited} selected={selected} onSelect={(abbr) => setSelected(abbr)} />
+        <div className="flex items-center justify-center gap-4 mt-2">
+          <span className="flex items-center gap-1.5 text-[11px] text-forest/50">
+            <span className="w-3 h-3 rounded-sm bg-sage/90 border border-forest/40 inline-block" />
+            On this trip
+          </span>
+          <span className="text-[11px] text-forest/40">
+            {visited.size} of 50 colored in
+          </span>
+        </div>
+      </div>
+
+      {/* ── Selected state facts ── */}
+      {selected && (
+        <StateFactsCard
+          abbr={selected}
+          visited={visited.has(selected)}
+          onClose={() => setSelected(null)}
+        />
+      )}
 
       {visitedList.length === 0 ? (
         <div className="card text-center py-14 space-y-2">
