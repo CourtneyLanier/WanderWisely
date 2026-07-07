@@ -3,12 +3,15 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { ALL_STATES, STATE_MAP, detectStates } from '@/lib/usStates'
+import UsaStatesMap from '@/components/map/UsaStatesMap'
+import StateFactsCard from '@/components/map/StateFactsCard'
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function MapPage() {
   const tripId = useAppStore((s) => s.tripId)
   const storageKey = `ww-visited-states-${tripId ?? 'none'}`
+  const [selected, setSelected] = useState<string | null>(null)
 
   const [manual, setManual] = useState<Set<string>>(() => {
     try {
@@ -66,12 +69,56 @@ export default function MapPage() {
     (STATE_MAP[a] ?? a).localeCompare(STATE_MAP[b] ?? b)
   )
 
+  const selectedIsAuto = selected !== null && autoDetected.has(selected)
+  const selectedIsVisited = selected !== null && visited.has(selected)
+
   return (
     <div className="p-4 pt-6 pb-10">
       <h1 className="font-display text-2xl text-forest mb-1">States</h1>
       <p className="text-sm text-forest/50 mb-4">
-        States fill in automatically from your saved addresses. Tap any state to add it manually.
+        States color in as your trip visits them. Tap a state on the map for its story.
       </p>
+
+      {/* ── The map ── */}
+      <div className="card mb-4">
+        <UsaStatesMap visited={visited} selected={selected} onSelect={(abbr) => setSelected(abbr)} />
+        <div className="flex items-center justify-center gap-4 mt-2">
+          <span className="flex items-center gap-1.5 text-[11px] text-forest/50">
+            <span className="w-3 h-3 rounded-sm bg-sage/90 border border-forest/40 inline-block" />
+            Visited
+          </span>
+          <span className="flex items-center gap-1.5 text-[11px] text-forest/50">
+            <span className="w-3 h-3 rounded-sm bg-white-warm border border-forest/40 inline-block" />
+            Not yet
+          </span>
+          <span className="text-[11px] text-forest/40">
+            {visited.size} of 50 colored in
+          </span>
+        </div>
+      </div>
+
+      {/* ── Selected state facts ── */}
+      {selected && (
+        <StateFactsCard
+          abbr={selected}
+          visited={selectedIsVisited}
+          onClose={() => setSelected(null)}
+          footer={
+            selectedIsAuto ? (
+              <p className="text-xs text-forest/45">
+                ✓ Added automatically from your trip&apos;s addresses.
+              </p>
+            ) : (
+              <button
+                onClick={() => toggle(selected)}
+                className={`${selectedIsVisited ? 'btn-secondary' : 'btn-primary'} w-full text-sm`}
+              >
+                {selectedIsVisited ? 'Remove from map' : `🖍️ Color in ${STATE_MAP[selected] ?? selected}`}
+              </button>
+            )
+          }
+        />
+      )}
 
       {/* ── Summary banner ── */}
       {visited.size > 0 && (
