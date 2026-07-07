@@ -8,6 +8,7 @@ import {
   getCachedDocFile,
   putCachedDocFile,
   deleteCachedDocFile,
+  type CachedDocFile,
 } from '@/lib/docFileCache'
 
 const BUCKET = 'trip-documents'
@@ -77,40 +78,58 @@ export async function ensureDocFileCached(doc: TripDocument): Promise<boolean> {
 }
 
 /**
- * Open a document's file in a new tab. Prefers the local cached copy (works
- * offline); falls back to downloading from Storage. Returns an error message,
- * or null on success.
+ * Get a document's file blob for in-app viewing. Prefers the local cached copy
+ * (works offline); falls back to downloading from Storage. Throws with a
+ * user-facing message on failure.
+ *
+ * Note: we deliberately do NOT window.open() blob URLs — popup blockers kill
+ * that after async work, and it does nothing at all in the installed
+ * (standalone) PWA on iOS. Files are shown in the in-app DocFileViewer instead.
  */
-export async function openDocFile(doc: TripDocument): Promise<string | null> {
-  if (!doc.file_path) return 'No file attached.'
-  try {
-    let cached = await getCachedDocFile(doc.id)
-    if (!cached) {
-      const ok = await ensureDocFileCached(doc)
-      if (!ok) {
-        return navigator.onLine === false
+export async function getDocFileBlob(doc: TripDocument): Promise<CachedDocFile> {
+  if (!doc.file_path) throw new Error('No file attached.')
+  let cached = await getCachedDocFile(doc.id)
+  if (!cached) {
+    const ok = await ensureDocFileCached(doc)
+    if (!ok) {
+      throw new Error(
+        navigator.onLine === false
           ? "This file hasn't been saved for offline use yet. Open it once while online."
           : 'Could not load the file. Please try again.'
-      }
-      cached = await getCachedDocFile(doc.id)
+      )
     }
-    if (!cached) return 'Could not load the file.'
+    cached = await getCachedDocFile(doc.id)
+  }
+  if (!cached) throw new Error('Could not load the file.')
+  return cached
+}
 
-    const url = URL.createObjectURL(cached.blob)
-    const win = window.open(url, '_blank', 'noopener')
-    if (!win) {
-      // Popup blocked — fall back to a same-tab navigation via a temporary link.
-      const a = document.createElement('a')
-      a.href = url
-      a.target = '_blank'
-      a.rel = 'noopener'
-      a.click()
+/**
+ * Hand an already-loaded file to the user: native share sheet on phones
+ * (Save to Files, AirDrop, Mail, …), otherwise a plain download. Returns an
+ * error message, or null on success / user-cancelled share.
+ */
+export async function shareOrDownloadFile(file: CachedDocFile): Promise<string | null> {
+  try {
+    const f = new File([file.blob], file.name, { type: file.type })
+    if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [f] })) {
+      await navigator.share({ files: [f] })
+      return null
     }
-    // Revoke well after the new tab has had time to load.
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return null // user closed the share sheet
+    // fall through to plain download
+  }
+  try {
+    const url = URL.createObjectURL(file.blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.name
+    a.click()
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
     return null
-  } catch (e) {
-    return (e as Error).message ?? 'Could not open the file.'
+  } catch {
+    return 'Could not download the file.'
   }
 }
 

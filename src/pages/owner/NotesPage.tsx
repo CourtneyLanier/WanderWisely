@@ -6,7 +6,8 @@ import { useTrip } from '@/hooks/useTrip'
 import {
   uploadDocFile,
   removeDocFile,
-  openDocFile,
+  getDocFileBlob,
+  shareOrDownloadFile,
   ensureDocFileCached,
   formatBytes,
   ACCEPTED_DOC_ACCEPT,
@@ -14,6 +15,7 @@ import {
   MAX_DOC_FILE_BYTES,
 } from '@/lib/docFiles'
 import { hasCachedDocFile } from '@/lib/docFileCache'
+import DocFileViewer from '@/components/docs/DocFileViewer'
 import type { TripNote, TripDocument, DocType } from '@/types'
 
 // Validate a picked file the same way the uploader does, for early feedback.
@@ -184,9 +186,10 @@ function DocCard({
   const [fileErr, setFileErr] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // Offline availability + open state
+  // Offline availability + view/share state
   const [offlineReady, setOfflineReady] = useState<boolean | null>(null)
-  const [opening, setOpening] = useState(false)
+  const [viewing, setViewing] = useState(false)
+  const [sharing, setSharing] = useState(false)
   const [openErr, setOpenErr] = useState('')
 
   useEffect(() => {
@@ -199,13 +202,19 @@ function DocCard({
     return () => { active = false }
   }, [doc.id, doc.file_path])
 
-  async function handleView() {
-    setOpening(true)
+  async function handleShare() {
+    setSharing(true)
     setOpenErr('')
-    const err = await openDocFile(doc)
-    if (err) setOpenErr(err)
-    else setOfflineReady(true)
-    setOpening(false)
+    try {
+      const file = await getDocFileBlob(doc)
+      setOfflineReady(true)
+      const err = await shareOrDownloadFile(file)
+      if (err) setOpenErr(err)
+    } catch (e) {
+      setOpenErr((e as Error).message)
+    } finally {
+      setSharing(false)
+    }
   }
 
   function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -445,13 +454,21 @@ function DocCard({
                   {offlineReady === false && <span className="text-gold"> · Not offline yet</span>}
                 </p>
               </div>
-              <button
-                onClick={handleView}
-                disabled={opening}
-                className="btn-primary text-sm px-3 py-1.5 shrink-0"
-              >
-                {opening ? 'Opening…' : 'View'}
-              </button>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={handleShare}
+                  disabled={sharing}
+                  className="btn-secondary text-sm px-3 py-1.5"
+                >
+                  {sharing ? '…' : 'Save'}
+                </button>
+                <button
+                  onClick={() => { setOpenErr(''); setViewing(true) }}
+                  className="btn-primary text-sm px-3 py-1.5"
+                >
+                  View
+                </button>
+              </div>
             </div>
           )}
           {openErr && <p className="text-xs text-terracotta">{openErr}</p>}
@@ -462,6 +479,14 @@ function DocCard({
             Delete document
           </button>
         </div>
+      )}
+
+      {viewing && (
+        <DocFileViewer
+          doc={doc}
+          onClose={() => setViewing(false)}
+          onCached={() => setOfflineReady(true)}
+        />
       )}
     </div>
   )
