@@ -98,6 +98,7 @@ export interface Budget {
   hotel_total: number
   hotel_buffer: number
   car_total_budget: number
+  misc_total_budget: number | null  // null = no misc budget set (migration 010)
   notes: string | null
 }
 

@@ -97,6 +97,7 @@ type BudgetInsert = {
   hotel_total?: number
   hotel_buffer?: number
   car_total_budget?: number
+  misc_total_budget?: number | null
   notes?: string | null
 }
 
@@ -257,6 +258,7 @@ export interface Database {
           hotel_total: number
           hotel_buffer: number
           car_total_budget: number
+          misc_total_budget: number | null
           notes: string | null
         }
         Insert: BudgetInsert

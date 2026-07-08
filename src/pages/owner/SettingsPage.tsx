@@ -66,6 +66,7 @@ export default function SettingsPage() {
   const [foodDays, setFoodDays] = useState('')
   const [hotelBuffer, setHotelBuffer] = useState('500')
   const [carBudget, setCarBudget] = useState('')
+  const [miscBudget, setMiscBudget] = useState('')
 
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -514,6 +515,7 @@ export default function SettingsPage() {
     setFoodDays(String(budget.food_days ?? ''))
     setHotelBuffer(String(budget.hotel_buffer ?? 500))
     setCarBudget(String(budget.car_total_budget ?? ''))
+    setMiscBudget(budget.misc_total_budget != null ? String(budget.misc_total_budget) : '')
   }, [budget])
 
   const numDays =
@@ -551,6 +553,7 @@ export default function SettingsPage() {
           hotel_total: 0,
           hotel_buffer: parseFloat(hotelBuffer) || 500,
           car_total_budget: parseFloat(carBudget) || 0,
+          misc_total_budget: parseFloat(miscBudget) > 0 ? parseFloat(miscBudget) : null,
         },
         { onConflict: 'trip_id' }
       )
@@ -699,6 +702,23 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-forest mb-1">Misc budget ($)</label>
+                <input
+                  type="number"
+                  value={miscBudget}
+                  onChange={(e) => setMiscBudget(e.target.value)}
+                  placeholder="Optional"
+                  min="0"
+                  className="input font-mono"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-forest/40">
+              Every budget is optional — leave a field blank (or 0) and that card just tracks spending
+              without a budget bar.
+            </p>
           </div>
         </div>
 
