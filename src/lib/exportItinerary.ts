@@ -239,16 +239,17 @@ function walletForDay(data: ExportData, day: Day): Reservation[] {
 // ─── Slide builders (return inner HTML for one <section class="slide">) ──────
 
 function brandbar(data: ExportData): string {
-  // The logo image is injected once via a CSS rule (see buildExportHtml), so
-  // here we only emit a lightweight element that references it by class.
-  const logo = data.logoDataUri ? `<span class="brandmark" role="img" aria-label="WanderWisely"></span>` : ''
+  // Real <img> (not a CSS background) so the logo survives print/Save-as-PDF,
+  // where background images are skipped by default. The data URI lives only on
+  // the cover slide's <img>; LOGO_SCRIPT copies it into these at load time.
+  const logo = data.logoDataUri ? `<img class="brandmark" alt="" />` : ''
   return `<div class="brandbar">${logo}<span>WanderWisely</span></div>`
 }
 
 function coverSlide(data: ExportData, opts: ExportOptions): string {
   const { trip } = data
   const logo = data.logoDataUri
-    ? `<div class="cover-logo" role="img" aria-label="WanderWisely"></div>`
+    ? `<img class="cover-logo" src="${data.logoDataUri}" alt="WanderWisely" />`
     : `<div class="cover-logo cover-logo--fallback">WW</div>`
   const dates = trip.start_date && trip.end_date
     ? `${fmtLongDate(trip.start_date)} – ${fmtLongDate(trip.end_date)}`
@@ -594,15 +595,15 @@ a{color:var(--deep-teal);text-decoration:none}
 .slide-inner{width:100%;max-width:780px;margin:0 auto}
 /* Brand bar */
 .brandbar{display:flex;align-items:center;gap:8px;margin-bottom:22px;opacity:.75}
-.brandmark{width:26px;height:26px;border-radius:50%;display:inline-block;
-  background-size:cover;background-position:center;
+.brandmark{width:26px;height:26px;border-radius:50%;object-fit:cover;
   box-shadow:0 0 0 1.5px rgba(45,61,30,.15)}
+.brandmark:not([src]){visibility:hidden}
 .brandbar span{font-size:12px;font-weight:600;letter-spacing:.12em;
   text-transform:uppercase;color:var(--sage)}
 /* Cover */
 .cover{align-items:center;justify-content:center;text-align:center}
 .cover-inner{max-width:640px}
-.cover-logo{width:132px;height:132px;border-radius:50%;background-size:cover;background-position:center;
+.cover-logo{width:132px;height:132px;border-radius:50%;object-fit:cover;
   margin:0 auto 26px;display:block;box-shadow:0 6px 24px rgba(45,61,30,.18),0 0 0 3px rgba(212,148,58,.35)}
 .cover-logo--fallback{display:flex;align-items:center;justify-content:center;
   background:var(--deep-teal);color:#fff;font-family:'Playfair Display',serif;font-size:44px}
@@ -691,6 +692,7 @@ a{color:var(--deep-teal);text-decoration:none}
   .block{break-inside:avoid}
   .print-only{display:block}
   .attach-img{box-shadow:none;max-height:9in}
+  .cover-logo,.brandmark{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .cover{min-height:9in;justify-content:center}
   a{color:var(--forest)}
   @page{margin:0.4in}
@@ -730,6 +732,17 @@ const SLIDESHOW_SCRIPT = `
 })();
 `
 
+// The logo's data URI is embedded exactly once, on the cover slide's <img>;
+// this copies it into every per-slide brandmark so large trips don't repeat
+// a ~250KB URI on each slide. Runs before AUTOPRINT_SCRIPT's print call.
+const LOGO_SCRIPT = `
+(function(){
+  var c=document.querySelector('img.cover-logo');
+  if(!c)return;
+  [].slice.call(document.querySelectorAll('img.brandmark')).forEach(function(m){m.src=c.src});
+})();
+`
+
 const AUTOPRINT_SCRIPT = `
 (function(){
   function go(){setTimeout(function(){window.print()},250)}
@@ -761,12 +774,6 @@ export function buildExportHtml(data: ExportData, opts: ExportOptions, autoPrint
   const titleSuffix = opts.content === 'meal_plan' ? 'Meal Plan'
     : opts.content === 'combined' ? 'Itinerary & Meal Plan' : 'Itinerary'
 
-  // Embed the logo once as a shared background image, rather than repeating the
-  // data URI on every slide (keeps large trips from bloating to several MB).
-  const logoCss = data.logoDataUri
-    ? `.brandmark,.cover-logo{background-image:url("${data.logoDataUri}")}`
-    : ''
-
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -776,7 +783,7 @@ export function buildExportHtml(data: ExportData, opts: ExportOptions, autoPrint
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet" />
-<style>${STYLES}${logoCss}</style>
+<style>${STYLES}</style>
 </head>
 <body>
 <div class="deck">${slides.join('\n')}</div>
@@ -786,7 +793,7 @@ export function buildExportHtml(data: ExportData, opts: ExportOptions, autoPrint
   <span class="counter" id="counter">1 / 1</span>
   <button id="next" aria-label="Next">›</button>
 </div>
-<script>${SLIDESHOW_SCRIPT}${hasAttachments ? ATTACH_SCRIPT : ''}${autoPrint ? AUTOPRINT_SCRIPT : ''}</script>
+<script>${SLIDESHOW_SCRIPT}${data.logoDataUri ? LOGO_SCRIPT : ''}${hasAttachments ? ATTACH_SCRIPT : ''}${autoPrint ? AUTOPRINT_SCRIPT : ''}</script>
 </body>
 </html>`
 }
