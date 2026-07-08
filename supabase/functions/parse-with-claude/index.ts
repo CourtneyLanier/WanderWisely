@@ -55,17 +55,27 @@ const RECEIPT_SYSTEM = `You are a receipt parser. Extract spending information f
 
 Return this exact structure:
 {
-  "label": "string (merchant name and brief description, e.g. \\"McDonald's – Breakfast\\" or \\"Shell – Gas\\")",
-  "amount": number,
-  "card": "food or car or hotel or misc",
-  "date": "YYYY-MM-DD or null"
+  "date": "YYYY-MM-DD or null",
+  "items": [
+    {
+      "label": "string (merchant name and brief description, e.g. \\"McDonald's – Breakfast\\" or \\"Shell – Gas\\")",
+      "amount": number,
+      "card": "food or car or hotel or misc"
+    }
+  ]
 }
 
 card rules:
-- "food" for restaurants, cafes, grocery stores, fast food, bars
-- "car" for gas stations, parking, tolls, car washes, auto services
+- "food" for restaurants, cafes, grocery stores, fast food, bars, snacks, drinks
+- "car" for gas/fuel, parking, tolls, car washes, auto services
 - "hotel" for hotel stays, lodging, room charges, resort fees
 - "misc" for everything else (shopping, souvenirs, attractions, tickets, pharmacy, etc.)
+
+Splitting rules:
+- Most receipts are ONE item: the merchant and the receipt total.
+- Split into multiple items ONLY when the receipt clearly contains purchases in different card categories — e.g. a gas station receipt with $60.00 of fuel plus $5.85 of chips and a drink becomes two items: fuel under "car" and the snacks under "food".
+- The item amounts must add up to the receipt's grand total. Fold tax and fees proportionally into the items (or into the largest item if allocation is unclear).
+- Never split purchases that belong to the same card category.
 
 date: extract the transaction date from the receipt if visible (format YYYY-MM-DD). Use null if not found.
 
@@ -227,7 +237,7 @@ Deno.serve(async (req) => {
     if (!allowed.includes(mediaType)) return ok({ ok: false, error: `Unsupported image type: ${mediaType}` })
     payload = {
       model: HAIKU,
-      max_tokens: 256,
+      max_tokens: 512,
       system: RECEIPT_SYSTEM,
       messages: [{
         role: 'user',

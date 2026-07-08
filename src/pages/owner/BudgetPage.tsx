@@ -34,11 +34,40 @@ function dateToLoggedAt(dateStr: string): string {
 type ScanStep = 'idle' | 'scanning' | 'review' | 'error'
 type ReceiptCard = 'food' | 'car' | 'hotel' | 'misc'
 
-interface ParsedReceipt {
+const CARD_OPTIONS: Array<{ value: ReceiptCard; label: string }> = [
+  { value: 'food', label: 'Food' },
+  { value: 'car', label: 'Car / Gas' },
+  { value: 'hotel', label: 'Hotel' },
+  { value: 'misc', label: 'Miscellaneous' },
+]
+
+interface SplitRow {
+  label: string
+  amount: string
+  card: ReceiptCard
+}
+
+interface ParsedReceiptItem {
   label: string | null
   amount: number | null
   card: ReceiptCard | null
-  date: string | null
+}
+
+/** The edge function returns { date, items: [...] }; older deployments returned a
+ *  single flat { label, amount, card, date }. Normalize both into split rows. */
+function parsedToRows(json: unknown, defaultCard: ReceiptCard): SplitRow[] {
+  const obj = (json ?? {}) as Record<string, unknown>
+  const items: ParsedReceiptItem[] = Array.isArray(obj.items)
+    ? (obj.items as ParsedReceiptItem[])
+    : [obj as unknown as ParsedReceiptItem]
+  const rows = items
+    .filter((it) => it && (it.label != null || it.amount != null))
+    .map((it) => ({
+      label: it.label ?? '',
+      amount: it.amount != null ? String(it.amount) : '',
+      card: it.card && CARD_OPTIONS.some((o) => o.value === it.card) ? it.card : defaultCard,
+    }))
+  return rows.length > 0 ? rows : [{ label: '', amount: '', card: defaultCard }]
 }
 
 function ReceiptScanFlow({
@@ -55,10 +84,7 @@ function ReceiptScanFlow({
   const queryClient = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<ScanStep>('idle')
-  const [, setParsed] = useState<ParsedReceipt>({ label: null, amount: null, card: defaultCard, date: null })
-  const [label, setLabel] = useState('')
-  const [amount, setAmount] = useState('')
-  const [card, setCard] = useState<ReceiptCard>(defaultCard)
+  const [rows, setRows] = useState<SplitRow[]>([{ label: '', amount: '', card: defaultCard }])
   const [date, setDate] = useState(todayStr())
   const [error, setError] = useState('')
 
@@ -85,12 +111,9 @@ function ReceiptScanFlow({
       if (!fnData?.ok) throw new Error(fnData?.error ?? 'Unknown error')
       const text = fnData.text as string
       const raw = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-      const json: ParsedReceipt = JSON.parse(raw)
+      const json = JSON.parse(raw) as { date?: string | null }
 
-      setParsed(json)
-      setLabel(json.label ?? '')
-      setAmount(json.amount != null ? String(json.amount) : '')
-      setCard(json.card ?? defaultCard)
+      setRows(parsedToRows(json, defaultCard))
       // Use parsed date if present and valid, otherwise keep today
       if (json.date && /^\d{4}-\d{2}-\d{2}$/.test(json.date)) setDate(json.date)
       setStep('review')
@@ -100,16 +123,25 @@ function ReceiptScanFlow({
     }
   }
 
+  function updateRow(index: number, patch: Partial<SplitRow>) {
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  }
+
+  const rowsValid = rows.length > 0 && rows.every((r) => r.amount !== '' && parseFloat(r.amount) > 0)
+  const total = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.from('spending_log').insert({
-        trip_id: tripId,
-        card,
-        amount: parseFloat(amount),
-        label: label.trim() || null,
-        entry_type: 'per_meal',
-        logged_at: dateToLoggedAt(date),
-      })
+      const { error } = await supabase.from('spending_log').insert(
+        rows.map((r) => ({
+          trip_id: tripId,
+          card: r.card,
+          amount: parseFloat(r.amount),
+          label: r.label.trim() || null,
+          entry_type: 'per_meal' as const,
+          logged_at: dateToLoggedAt(date),
+        }))
+      )
       if (error) throw error
     },
     onSuccess: () => {
@@ -179,38 +211,69 @@ function ReceiptScanFlow({
   return (
     <div className="space-y-3">
       <p className="font-display text-lg text-forest">Review & Save</p>
-      <div>
-        <label className="block text-sm text-forest mb-1">Description</label>
-        <input
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder="e.g. McDonald's – Breakfast"
-          className="input"
-          autoFocus
-        />
-      </div>
-      <div>
-        <label className="block text-sm text-forest mb-1">Amount ($)</label>
-        <input
-          type="number"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="0.00"
-          min="0"
-          step="0.01"
-          className="input font-mono"
-        />
-      </div>
-      <div>
-        <label className="block text-sm text-forest mb-1">Category</label>
-        <select value={card} onChange={(e) => setCard(e.target.value as ReceiptCard)} className="input">
-          <option value="food">Food</option>
-          <option value="car">Car / Gas</option>
-          <option value="hotel">Hotel</option>
-          <option value="misc">Miscellaneous</option>
-        </select>
-      </div>
+      {rows.length > 1 && (
+        <p className="text-xs text-forest/50">
+          This receipt was split into {rows.length} categories — adjust anything before saving.
+        </p>
+      )}
+
+      {rows.map((row, i) => (
+        <div key={i} className="rounded-lg border border-forest/10 bg-white/50 p-2.5 space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={row.label}
+              onChange={(e) => updateRow(i, { label: e.target.value })}
+              placeholder="e.g. Shell – Gas"
+              className="input flex-1"
+              autoFocus={i === 0}
+            />
+            {rows.length > 1 && (
+              <button
+                onClick={() => setRows((prev) => prev.filter((_, j) => j !== i))}
+                className="text-terracotta/50 hover:text-terracotta text-xs leading-none px-1"
+                title="Remove this line"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              value={row.amount}
+              onChange={(e) => updateRow(i, { amount: e.target.value })}
+              placeholder="0.00"
+              min="0"
+              step="0.01"
+              className="input font-mono w-28"
+            />
+            <select
+              value={row.card}
+              onChange={(e) => updateRow(i, { card: e.target.value as ReceiptCard })}
+              className="input flex-1"
+            >
+              {CARD_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      ))}
+
+      <button
+        onClick={() => setRows((prev) => [...prev, { label: '', amount: '', card: defaultCard }])}
+        className="text-xs text-sage hover:text-forest transition-colors"
+      >
+        + Split into another category
+      </button>
+
+      {rows.length > 1 && (
+        <p className="text-xs text-forest/50 font-mono">
+          Total: ${total.toFixed(2)}
+        </p>
+      )}
+
       <div>
         <label className="block text-sm text-forest mb-1">Date</label>
         <input
@@ -227,10 +290,12 @@ function ReceiptScanFlow({
       <div className="flex gap-2">
         <button
           onClick={() => saveMutation.mutate()}
-          disabled={saveMutation.isPending || !amount || parseFloat(amount) <= 0}
+          disabled={saveMutation.isPending || !rowsValid}
           className="btn-primary flex-1"
         >
-          {saveMutation.isPending ? 'Saving…' : 'Save'}
+          {saveMutation.isPending
+            ? 'Saving…'
+            : rows.length > 1 ? `Save ${rows.length} entries` : 'Save'}
         </button>
         <button onClick={() => setStep('idle')} className="btn-secondary px-3">Retake</button>
         <button onClick={onCancel} className="btn-secondary px-3">✕</button>
@@ -277,6 +342,7 @@ function FoodCard({
   const todaySpent = byDate[today] ?? 0
   const totalSpent = foodLogs.reduce((s, l) => s + l.amount, 0)
   const remaining = budget.food_total - totalSpent
+  const hasBudget = budget.food_total > 0
 
   // Cushion: how much ahead/behind we are vs. expected spend for elapsed trip days.
   // Uses real elapsed days so that days with no entries still count toward the budget.
@@ -358,35 +424,55 @@ function FoodCard({
           </svg>
           <p className="font-display text-lg text-forest">Food</p>
         </div>
-        <div className={`text-sm font-mono font-semibold ${cushionColor}`}>
-          {cushion >= 0 ? '+' : ''}{dollar(Math.round(cushion))} cushion
-        </div>
+        {hasBudget ? (
+          <div className={`text-sm font-mono font-semibold ${cushionColor}`}>
+            {cushion >= 0 ? '+' : ''}{dollar(Math.round(cushion))} cushion
+          </div>
+        ) : (
+          <div className="text-sm font-mono font-semibold text-forest/60">
+            {dollar(Math.round(totalSpent))} total
+          </div>
+        )}
       </div>
 
-      {/* Progress bar */}
-      <div className="h-2 bg-forest/10 rounded-full mb-4 overflow-hidden">
-        <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${barPct}%` }} />
-      </div>
+      {/* Progress bar + stats — only when a food budget is set */}
+      {hasBudget ? (
+        <>
+          <div className="h-2 bg-forest/10 rounded-full mb-4 overflow-hidden">
+            <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${barPct}%` }} />
+          </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-2 mb-4 text-center">
-        <div className="card-inset py-2.5 px-1">
-          <p className="text-xs text-forest/50 mb-0.5">Per day</p>
-          <p className="font-mono text-sm font-medium text-forest">{dollar(Math.round(baseline))}</p>
+          <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+            <div className="card-inset py-2.5 px-1">
+              <p className="text-xs text-forest/50 mb-0.5">Per day</p>
+              <p className="font-mono text-sm font-medium text-forest">{dollar(Math.round(baseline))}</p>
+            </div>
+            <div className="card-inset py-2.5 px-1">
+              <p className="text-xs text-forest/50 mb-0.5">Today</p>
+              <p className={`font-mono text-sm font-medium ${todaySpent > baseline && baseline > 0 ? 'text-terracotta' : 'text-forest'}`}>
+                {dollar(todaySpent)}
+              </p>
+            </div>
+            <div className="card-inset py-2.5 px-1">
+              <p className="text-xs text-forest/50 mb-0.5">Remaining</p>
+              <p className={`font-mono text-sm font-medium ${remaining < 0 ? 'text-terracotta' : 'text-forest'}`}>
+                {dollar(Math.round(remaining))}
+              </p>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 mb-4 text-center">
+          <div className="card-inset py-2.5 px-1">
+            <p className="text-xs text-forest/50 mb-0.5">Today</p>
+            <p className="font-mono text-sm font-medium text-forest">{dollar(todaySpent)}</p>
+          </div>
+          <div className="card-inset py-2.5 px-1">
+            <p className="text-xs text-forest/50 mb-0.5">Total spent</p>
+            <p className="font-mono text-sm font-medium text-forest">{dollar(Math.round(totalSpent))}</p>
+          </div>
         </div>
-        <div className="card-inset py-2.5 px-1">
-          <p className="text-xs text-forest/50 mb-0.5">Today</p>
-          <p className={`font-mono text-sm font-medium ${todaySpent > baseline && baseline > 0 ? 'text-terracotta' : 'text-forest'}`}>
-            {dollar(todaySpent)}
-          </p>
-        </div>
-        <div className="card-inset py-2.5 px-1">
-          <p className="text-xs text-forest/50 mb-0.5">Remaining</p>
-          <p className={`font-mono text-sm font-medium ${remaining < 0 ? 'text-terracotta' : 'text-forest'}`}>
-            {dollar(Math.round(remaining))}
-          </p>
-        </div>
-      </div>
+      )}
 
       {/* Today's entries */}
       {todayLogs.length > 0 && (
@@ -887,9 +973,10 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
   )
 
   const totalSpent = carLogs.reduce((s, l) => s + l.amount, 0)
+  const hasBudget = budget.car_total_budget > 0
   const remaining = budget.car_total_budget - totalSpent
-  const overBudget = totalSpent > budget.car_total_budget
-  const pct = budget.car_total_budget > 0 ? Math.min(100, (totalSpent / budget.car_total_budget) * 100) : 0
+  const overBudget = hasBudget && totalSpent > budget.car_total_budget
+  const pct = hasBudget ? Math.min(100, (totalSpent / budget.car_total_budget) * 100) : 0
 
   const addMutation = useMutation({
     mutationFn: async () => {
@@ -935,30 +1022,36 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
           <p className="font-display text-lg text-forest">Car / Gas</p>
         </div>
         <div className={`text-sm font-mono font-semibold ${overBudget ? 'text-terracotta' : 'text-forest/60'}`}>
-          {dollar(Math.round(totalSpent))} / {dollar(budget.car_total_budget)}
+          {hasBudget
+            ? `${dollar(Math.round(totalSpent))} / ${dollar(budget.car_total_budget)}`
+            : `${dollar(Math.round(totalSpent))} total`}
         </div>
       </div>
 
-      {/* Progress bar */}
-      <div className="h-2 bg-forest/10 rounded-full mb-4 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${overBudget ? 'bg-terracotta' : 'bg-gold'}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      {/* Progress bar + stats — only when a car budget is set */}
+      {hasBudget && (
+        <>
+          <div className="h-2 bg-forest/10 rounded-full mb-4 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${overBudget ? 'bg-terracotta' : 'bg-gold'}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="card-inset p-3">
-          <p className="text-xs text-forest/50 mb-1">Budget ceiling</p>
-          <p className="font-mono text-sm font-semibold text-forest">{dollar(budget.car_total_budget)}</p>
-        </div>
-        <div className="card-inset p-3">
-          <p className="text-xs text-forest/50 mb-1">Remaining</p>
-          <p className={`font-mono text-sm font-semibold ${overBudget ? 'text-terracotta' : 'text-forest'}`}>
-            {dollar(Math.round(remaining))}
-          </p>
-        </div>
-      </div>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="card-inset p-3">
+              <p className="text-xs text-forest/50 mb-1">Budget ceiling</p>
+              <p className="font-mono text-sm font-semibold text-forest">{dollar(budget.car_total_budget)}</p>
+            </div>
+            <div className="card-inset p-3">
+              <p className="text-xs text-forest/50 mb-1">Remaining</p>
+              <p className={`font-mono text-sm font-semibold ${overBudget ? 'text-terracotta' : 'text-forest'}`}>
+                {dollar(Math.round(remaining))}
+              </p>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Scan receipt flow */}
       {adding === 'scan' && (
@@ -1052,7 +1145,7 @@ function CarCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]
 
 // ── MiscCard ───────────────────────────────────────────────────────────────────
 
-function MiscCard({ logs, tripId }: { logs: SpendingLog[]; tripId: string }) {
+function MiscCard({ budget, logs, tripId }: { budget: Budget; logs: SpendingLog[]; tripId: string }) {
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState<'manual' | 'scan' | false>(false)
   const [label, setLabel] = useState('')
@@ -1065,6 +1158,11 @@ function MiscCard({ logs, tripId }: { logs: SpendingLog[]; tripId: string }) {
   )
 
   const totalSpent = miscLogs.reduce((s, l) => s + l.amount, 0)
+  const miscBudget = budget.misc_total_budget
+  const hasBudget = miscBudget != null && miscBudget > 0
+  const remaining = hasBudget ? miscBudget - totalSpent : 0
+  const overBudget = hasBudget && totalSpent > miscBudget
+  const pct = hasBudget ? Math.min(100, (totalSpent / miscBudget) * 100) : 0
 
   const addMutation = useMutation({
     mutationFn: async () => {
@@ -1109,10 +1207,37 @@ function MiscCard({ logs, tripId }: { logs: SpendingLog[]; tripId: string }) {
           </svg>
           <p className="font-display text-lg text-forest">Miscellaneous</p>
         </div>
-        <div className="text-sm font-mono font-semibold text-forest/60">
-          {dollar(Math.round(totalSpent))} total
+        <div className={`text-sm font-mono font-semibold ${overBudget ? 'text-terracotta' : 'text-forest/60'}`}>
+          {hasBudget
+            ? `${dollar(Math.round(totalSpent))} / ${dollar(miscBudget)}`
+            : `${dollar(Math.round(totalSpent))} total`}
         </div>
       </div>
+
+      {/* Progress bar + stats — only when a misc budget is set */}
+      {hasBudget && (
+        <>
+          <div className="h-2 bg-forest/10 rounded-full mb-4 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${overBudget ? 'bg-terracotta' : 'bg-gold'}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="card-inset p-3">
+              <p className="text-xs text-forest/50 mb-1">Budget ceiling</p>
+              <p className="font-mono text-sm font-semibold text-forest">{dollar(miscBudget)}</p>
+            </div>
+            <div className="card-inset p-3">
+              <p className="text-xs text-forest/50 mb-1">Remaining</p>
+              <p className={`font-mono text-sm font-semibold ${overBudget ? 'text-terracotta' : 'text-forest'}`}>
+                {dollar(Math.round(remaining))}
+              </p>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Scan receipt flow */}
       {adding === 'scan' && (
@@ -1292,7 +1417,7 @@ export default function BudgetPage() {
         <FoodCard budget={budget} logs={logs} tripId={activeTripId} trip={trip} />
         <HotelCard logs={logs} tripId={activeTripId} hotelReservations={hotelReservations} />
         <CarCard budget={budget} logs={logs} tripId={activeTripId} />
-        <MiscCard logs={logs} tripId={activeTripId} />
+        <MiscCard budget={budget} logs={logs} tripId={activeTripId} />
       </div>
     </div>
   )
