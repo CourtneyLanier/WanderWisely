@@ -56,6 +56,7 @@ export default function SuggestStopsSection({
         name: stop.name,
         type: 'side_quest',
         address: stop.address ?? stop.location ?? null,
+        url: stop.website,
         notes: notes || null,
         is_booked: false,
       })
@@ -107,6 +108,16 @@ export default function SuggestStopsSection({
                       {stop.detour && <span className="text-deep-teal"> · {stop.detour}</span>}
                     </p>
                     <p className="text-sm text-forest/75 leading-snug mt-1.5">{stop.description}</p>
+                    {stop.website && (
+                      <a
+                        href={stop.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-block text-xs text-deep-teal underline underline-offset-2 mt-1.5 hover:text-forest transition-colors"
+                      >
+                        Visit website ↗
+                      </a>
+                    )}
                   </div>
                   <button
                     onClick={() => addMutation.mutate(stop)}
