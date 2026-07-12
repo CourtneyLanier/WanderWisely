@@ -13,6 +13,7 @@ export interface SuggestedStop {
   description: string
   detour: string
   address: string | null
+  website: string | null
 }
 
 export const STOP_CATEGORY_ICONS: Record<StopCategory, string> = {
@@ -72,6 +73,10 @@ export async function suggestStops(
       description: typeof s.description === 'string' ? s.description : '',
       detour: typeof s.detour === 'string' ? s.detour : '',
       address: typeof s.address === 'string' && s.address.trim() ? s.address.trim() : null,
+      website:
+        typeof s.website === 'string' && /^https?:\/\//i.test(s.website.trim())
+          ? s.website.trim()
+          : null,
     })
   }
   if (stops.length === 0) throw new Error('No stops found for this route — please try again.')

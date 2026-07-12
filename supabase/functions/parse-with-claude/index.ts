@@ -93,9 +93,12 @@ Return ONLY a valid JSON array (no preamble, no markdown fences) of 6 to 8 stops
     "location": "Town, ST",
     "description": "1-2 sentences on what it is and why it's worth the stop",
     "detour": "how far off the route it is, e.g. 'right on US-89' or 'about 10 min off the highway'",
-    "address": "street address if known, otherwise null"
+    "address": "street address if known, otherwise null",
+    "website": "the place's official website URL if you saw one in your search results, otherwise null"
   }
-]`
+]
+
+website: only include a URL you actually saw in search results — never guess or construct one. Prefer the place's own site over review/aggregator pages.`
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
