@@ -21,6 +21,10 @@ export interface Trip {
   share_budget: boolean
   share_notes: boolean
   share_map: boolean
+  split_enabled: boolean        // group split (migration 011)
+  split_currency: string
+  split_deadline: string | null // settle-up deadline (YYYY-MM-DD)
+  share_split: boolean          // split visible/joinable via share link
   created_at: string
 }
 
@@ -156,6 +160,59 @@ export interface TripDocument {
   sort_order: number
   created_at: string
   updated_at: string
+}
+
+
+// ============================================================
+// GROUP SPLIT TYPES (migration 011)
+// ============================================================
+
+export type PayApp = 'venmo' | 'paypal' | 'cashapp' | 'other'
+export type SplitMethod = 'even' | 'party_size' | 'custom'
+export type SplitCategory =
+  | 'Lodging' | 'Food' | 'Transportation' | 'Gas' | 'Activities' | 'Shopping' | 'Other'
+
+export interface Traveler {
+  id: string
+  trip_id: string
+  name: string
+  party_size: number
+  pay_app: PayApp | null
+  pay_handle: string | null     // stored WITHOUT leading @ or $
+  custom_weight: number
+  settled: boolean              // the Dashboard "Paid?" column
+  email: string | null          // optional; used to auto-claim a roster spot
+  user_id: string | null        // set when a member claims this traveler; null = proxy
+  sort_order: number
+  created_at: string
+}
+
+export interface SplitExpense {
+  id: string
+  trip_id: string
+  spent_on: string | null
+  description: string | null
+  category: SplitCategory | null
+  paid_by: string | null        // traveler id
+  amount: number
+  split_method: SplitMethod
+  shared_with: string[]         // traveler ids sharing this cost
+  created_at: string
+}
+
+export interface TripMember {
+  id: string
+  trip_id: string
+  user_id: string
+  role: 'member'
+  joined_at: string
+}
+
+export interface Profile {
+  id: string
+  is_premium: boolean
+  license_code: string | null
+  created_at: string
 }
 
 
