@@ -20,6 +20,8 @@ import GuestDaysPage from '@/pages/guest/GuestDaysPage'
 import GuestRoutePage from '@/pages/guest/GuestRoutePage'
 import GuestWalletPage from '@/pages/guest/GuestWalletPage'
 import GuestBudgetPage from '@/pages/guest/GuestBudgetPage'
+import GuestSplitPage from '@/pages/guest/GuestSplitPage'
+import SplitPage from '@/pages/owner/SplitPage'
 import GuestNotesPage from '@/pages/guest/GuestNotesPage'
 import GuestMapPage from '@/pages/guest/GuestMapPage'
 import NotFoundPage from '@/pages/NotFoundPage'
@@ -86,6 +88,7 @@ export default function App() {
           <Route path="route" element={<GuestRoutePage />} />
           <Route path="wallet" element={<GuestWalletPage />} />
           <Route path="budget" element={<GuestBudgetPage />} />
+          <Route path="split" element={<GuestSplitPage />} />
           <Route path="notes" element={<GuestNotesPage />} />
           <Route path="map" element={<GuestMapPage />} />
         </Route>
@@ -101,6 +104,7 @@ export default function App() {
             <Route path="/wallet" element={<WalletPage />} />
             <Route path="/route" element={<RoutePage />} />
             <Route path="/budget" element={<BudgetPage />} />
+            <Route path="/split" element={<SplitPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/map" element={<MapPage />} />
             <Route path="/notes" element={<NotesPage />} />

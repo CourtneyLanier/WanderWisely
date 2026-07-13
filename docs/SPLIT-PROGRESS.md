@@ -13,16 +13,28 @@ Updated continuously as phases complete. Each phase is checked off only after ty
 - [x] Note: repo has no test runner → adding vitest (dev-only). No linter configured → `tsc` (runs in `npm run build`) is the lint gate.
 
 ## Phases (§13 build order)
-- [ ] **0. Share-link 404 fix** — move `_redirects` → `public/_redirects`, verify in dist
-- [ ] **1. Migration `011_split_budget.sql`** — trips columns (all default OFF), `travelers`, `trip_members`, `split_expenses`, `profiles` (premium), owner + member RLS, `join_trip_via_share_code` / `claim_traveler` fns, `guest_get_trip` returns `share_split`
-- [ ] **2. Types** — `src/types/index.ts` + `database.ts`
-- [ ] **3. `splitMath.ts` + golden tests** — vitest, §15 numbers (show output first run)
-- [ ] **4. `usePremium` hook** — profiles entitlement + dev override
-- [ ] **5. Settings "Group Split" card** — gated toggle, currency, deadline, `share_split`, roster CRUD (≤8, emails)
-- [ ] **6. `SplitPage` (owner) + `SettleBanner`** — banner, log form + receipt scan, list, balances, settle-up + Pay links, category totals, copy message
-- [ ] **7. Membership** — auto-enroll on share link, claim-a-traveler (email auto-match else picker), member Split view
-- [ ] **8. Nav + routes** — Split tab (`split_enabled && isPremium`), `/split` route + redirect
-- [ ] **9. Banner on Overview + verification pass (§15)**
+- [x] **0. Share-link 404 fix** — moved `_redirects` → `public/_redirects` (verified in dist)
+- [x] **1. Migration `011_split_budget.sql`** — written & reviewed; NOT applied to Supabase (pause point)
+- [x] **2. Types** — `src/types/index.ts` + `database.ts` (tsc clean)
+- [x] **3. `splitMath.ts` + golden tests** — 26/26 vitest tests pass incl. every §15 number and transfer order
+- [x] **4. `usePremium` hook** — profiles entitlement + dev override (`VITE_PREMIUM_OVERRIDE` / localStorage `ww-premium-override`)
+- [x] **5. Settings "Group Split" card** — gated toggle, currency, deadline, `share_split`, roster CRUD (≤8, emails, reorder, pay handles stripped of @/$)
+- [x] **6. `SplitPage` (owner) + `SettleBanner`** — all 7 sections of §8; receipt scan is a sibling of BudgetPage's flow (same edge fn) because §16 keeps BudgetPage untouched
+- [x] **7. Membership** — `useTripMembership` (auto-enroll via `join_trip_via_share_code`), `ClaimTraveler` picker (email auto-claim happens server-side), `GuestSplitPage` member view; anonymous visitors get "log in to join"
+- [x] **8. Nav + routes** — owner Split tab after Budget (`split_enabled && isPremium`), `/split` route redirects to `/budget` when off; guest Split tab when `share_split`
+- [x] **9. Banner on Overview + verification pass (§15)** — see below
+
+## Verification results
+- TypeScript: clean (`tsc --noEmit`, also runs inside `npm run build`)
+- Tests: **26/26 pass** — §15 golden numbers exact (balances, transfer order, total), all 3 split methods, pay links, deadline flips, group message
+- Build: succeeds; `dist/_redirects` confirmed shipped (404 fix verified)
+- Constraint audit: `BudgetPage.tsx` + `budget`/`spending_log` untouched (git-verified) · migration additive, flags default OFF · no member action gated on premium · real membership (trip_members + claim)
+
+## Notable decisions (blueprint ambiguities resolved)
+- §8 "reuse ReceiptScanFlow" vs §16 "BudgetPage untouched" → §16 wins; Split has its own scan that calls the same `parse-with-claude` edge function and prefills the expense form
+- `join_trip_via_share_code` also requires `split_enabled` (not just `share_split`), and `guest_get_trip` returns `share_split AND split_enabled` — one source of truth for "joinable"
+- Members can also fix their own pay handle (RLS allows updating their own row, not just `settled`) — row scope is the enforced boundary
+- Golden-test expenses reverse-engineered (xlsx not in repo); documented in the test header
 
 ## Paused for Courtney (live infrastructure — written & verified locally, NOT applied)
 - [ ] Apply migration 011 to Supabase

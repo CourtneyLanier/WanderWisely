@@ -232,7 +232,8 @@ BEGIN
   FROM trips t
   WHERE t.share_code = p_share_code
     AND t.share_enabled = true
-    AND t.share_split = true;
+    AND t.share_split = true
+    AND t.split_enabled = true;
 
   IF v_trip_id IS NULL THEN
     RETURN NULL;
@@ -349,7 +350,7 @@ SET search_path = public
 AS $$
   SELECT id, name, start_date, end_date, num_days, share_code, share_enabled, created_at,
          share_days, share_route, share_wallet, share_budget, share_notes, share_map,
-         share_split
+         (share_split AND split_enabled) AS share_split  -- joinable only when split is actually on
   FROM trips
   WHERE share_code = p_share_code
     AND share_enabled = true;

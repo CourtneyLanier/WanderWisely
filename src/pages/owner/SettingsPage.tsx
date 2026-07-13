@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
 import ItineraryExport from '@/components/export/ItineraryExport'
+import GroupSplitSettings from '@/components/split/GroupSplitSettings'
 import type { Budget, Day, Lodging, Activity, Reservation, Trip } from '@/types'
 
 // ── Sync types ─────────────────────────────────────────────────────────────────
@@ -721,6 +722,9 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
+
+        {/* ── Group Split ── */}
+        {trip && <GroupSplitSettings trip={trip} />}
 
         {/* ── Sync from Wallet ── */}
         {trip && (
