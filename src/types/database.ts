@@ -20,6 +20,53 @@ type TripInsert = {
   share_budget?: boolean
   share_notes?: boolean
   share_map?: boolean
+  split_enabled?: boolean
+  split_currency?: string
+  split_deadline?: string | null
+  share_split?: boolean
+  created_at?: string
+}
+
+type TravelerInsert = {
+  id?: string
+  trip_id: string
+  name: string
+  party_size?: number
+  pay_app?: 'venmo' | 'paypal' | 'cashapp' | 'other' | null
+  pay_handle?: string | null
+  custom_weight?: number
+  settled?: boolean
+  email?: string | null
+  user_id?: string | null
+  sort_order?: number
+  created_at?: string
+}
+
+type TripMemberInsert = {
+  id?: string
+  trip_id: string
+  user_id: string
+  role?: 'member'
+  joined_at?: string
+}
+
+type SplitExpenseInsert = {
+  id?: string
+  trip_id: string
+  spent_on?: string | null
+  description?: string | null
+  category?: string | null
+  paid_by?: string | null
+  amount: number
+  split_method?: 'even' | 'party_size' | 'custom'
+  shared_with?: string[]
+  created_at?: string
+}
+
+type ProfileInsert = {
+  id: string
+  is_premium?: boolean
+  license_code?: string | null
   created_at?: string
 }
 
@@ -161,10 +208,73 @@ export interface Database {
           share_budget: boolean
           share_notes: boolean
           share_map: boolean
+          split_enabled: boolean
+          split_currency: string
+          split_deadline: string | null
+          share_split: boolean
           created_at: string
         }
         Insert: TripInsert
         Update: Partial<TripInsert>
+        Relationships: []
+      }
+      travelers: {
+        Row: {
+          id: string
+          trip_id: string
+          name: string
+          party_size: number
+          pay_app: 'venmo' | 'paypal' | 'cashapp' | 'other' | null
+          pay_handle: string | null
+          custom_weight: number
+          settled: boolean
+          email: string | null
+          user_id: string | null
+          sort_order: number
+          created_at: string
+        }
+        Insert: TravelerInsert
+        Update: Partial<TravelerInsert>
+        Relationships: []
+      }
+      trip_members: {
+        Row: {
+          id: string
+          trip_id: string
+          user_id: string
+          role: 'member'
+          joined_at: string
+        }
+        Insert: TripMemberInsert
+        Update: Partial<TripMemberInsert>
+        Relationships: []
+      }
+      split_expenses: {
+        Row: {
+          id: string
+          trip_id: string
+          spent_on: string | null
+          description: string | null
+          category: string | null
+          paid_by: string | null
+          amount: number
+          split_method: 'even' | 'party_size' | 'custom'
+          shared_with: string[]
+          created_at: string
+        }
+        Insert: SplitExpenseInsert
+        Update: Partial<SplitExpenseInsert>
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          id: string
+          is_premium: boolean
+          license_code: string | null
+          created_at: string
+        }
+        Insert: ProfileInsert
+        Update: Partial<ProfileInsert>
         Relationships: []
       }
       days: {
@@ -334,7 +444,16 @@ export interface Database {
           share_budget: boolean
           share_notes: boolean
           share_map: boolean
+          share_split: boolean
         }[]
+      }
+      join_trip_via_share_code: {
+        Args: { p_share_code: string }
+        Returns: string | null
+      }
+      claim_traveler: {
+        Args: { p_traveler_id: string }
+        Returns: boolean
       }
       guest_get_notes: {
         Args: { p_share_code: string }

@@ -1,4 +1,6 @@
 import { NavLink } from 'react-router-dom'
+import { useTrip } from '@/hooks/useTrip'
+import { usePremium } from '@/hooks/usePremium'
 
 function IconOverview({ active }: { active: boolean }) {
   return (
@@ -78,6 +80,19 @@ function IconNotes({ active }: { active: boolean }) {
   )
 }
 
+// Split: two arrows diverging from a coin — the group ledger
+function IconSplit({ active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={active ? 2 : 1.5} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="9" cy="7" r="4" />
+      <path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      <path d="M21 21v-2a4 4 0 0 0-3-3.85" />
+    </svg>
+  )
+}
+
 function IconSettings({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -88,7 +103,7 @@ function IconSettings({ active }: { active: boolean }) {
   )
 }
 
-const tabs = [
+const baseTabs = [
   { to: '/overview', label: 'Home',     Icon: IconOverview },
   { to: '/days',     label: 'Days',     Icon: IconDays     },
   { to: '/wallet',   label: 'Wallet',   Icon: IconWallet   },
@@ -100,6 +115,19 @@ const tabs = [
 ]
 
 export default function TabNav() {
+  const { data: trip } = useTrip()
+  const { isPremium } = usePremium()
+
+  // Split tab appears only when the owner enabled it (premium) — right after
+  // Budget. The solo Budget tab is always there, unchanged.
+  const tabs = (trip?.split_enabled ?? false) && isPremium
+    ? [
+        ...baseTabs.slice(0, 5),
+        { to: '/split', label: 'Split', Icon: IconSplit },
+        ...baseTabs.slice(5),
+      ]
+    : baseTabs
+
   return (
     <nav className="tab-nav">
       {tabs.map(({ to, label, Icon }) => (

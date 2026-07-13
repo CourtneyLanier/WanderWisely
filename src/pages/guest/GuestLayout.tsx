@@ -27,6 +27,7 @@ export default function GuestLayout() {
     { to: `/trip/${shareCode}/route`,  end: false, icon: '🧭', label: 'Route',  show: trip?.share_route ?? true },
     { to: `/trip/${shareCode}/wallet`, end: false, icon: '💳', label: 'Wallet', show: trip?.share_wallet ?? false },
     { to: `/trip/${shareCode}/budget`, end: false, icon: '💰', label: 'Budget', show: trip?.share_budget ?? false },
+    { to: `/trip/${shareCode}/split`,  end: false, icon: '💸', label: 'Split',  show: trip?.share_split ?? false },
     { to: `/trip/${shareCode}/notes`,  end: false, icon: '📝', label: 'Notes',  show: trip?.share_notes ?? false },
     { to: `/trip/${shareCode}/map`,    end: false, icon: '🗺️', label: 'Map',    show: trip?.share_map ?? false },
   ].filter((t) => t.show)

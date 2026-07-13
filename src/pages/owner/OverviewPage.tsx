@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
+import SettleBanner from '@/components/split/SettleBanner'
 import type { Budget, SpendingLog, Day, Lodging, Activity, Reservation } from '@/types'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -351,6 +352,17 @@ export default function OverviewPage() {
       </div>
 
       <div className="p-4 space-y-4 pb-10">
+        {/* Split settle-up reminder — the live nudge (§11); renders nothing
+            unless split is on and there are expenses */}
+        {(trip.split_enabled ?? false) && (
+          <SettleBanner
+            tripId={trip.id}
+            currency={trip.split_currency ?? '$'}
+            deadline={trip.split_deadline ?? null}
+            linkTo="/split"
+          />
+        )}
+
         {/* Today's card — shown during trip */}
         {tripInProgress && todayDay && (
           <>
