@@ -131,29 +131,48 @@ CREATE POLICY "owner_all_split_expenses" ON split_expenses
   );
 
 -- ── Member policies (a trip_members row for the trip grants access) ──
+--
+-- IMPORTANT: the membership check MUST go through a SECURITY DEFINER helper,
+-- not a plain EXISTS subquery. Policy subqueries are themselves subject to
+-- RLS, and a trips policy reading trip_members while a trip_members policy
+-- reads trips is a cycle — Postgres rejects every trips query with
+-- "infinite recursion detected in policy". The definer function reads
+-- trip_members without invoking RLS, breaking the cycle. (Fixed in 012 for
+-- databases that ran the original 011.)
+
+CREATE OR REPLACE FUNCTION public.is_trip_member(p_trip_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM trip_members m
+    WHERE m.trip_id = p_trip_id
+      AND m.user_id = auth.uid()
+  );
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.is_trip_member(uuid) FROM anon, public;
+GRANT  EXECUTE ON FUNCTION public.is_trip_member(uuid) TO authenticated;
 
 -- Members may read the trip row (name, split currency/deadline, flags).
 DROP POLICY IF EXISTS "member_select_trips" ON trips;
 CREATE POLICY "member_select_trips" ON trips
   FOR SELECT TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM trip_members m WHERE m.trip_id = trips.id AND m.user_id = auth.uid())
-  );
+  USING (public.is_trip_member(trips.id));
 
 -- Members may read the roster and all split expenses.
 DROP POLICY IF EXISTS "member_select_travelers" ON travelers;
 CREATE POLICY "member_select_travelers" ON travelers
   FOR SELECT TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM trip_members m WHERE m.trip_id = travelers.trip_id AND m.user_id = auth.uid())
-  );
+  USING (public.is_trip_member(travelers.trip_id));
 
 DROP POLICY IF EXISTS "member_select_split_expenses" ON split_expenses;
 CREATE POLICY "member_select_split_expenses" ON split_expenses
   FOR SELECT TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM trip_members m WHERE m.trip_id = split_expenses.trip_id AND m.user_id = auth.uid())
-  );
+  USING (public.is_trip_member(split_expenses.trip_id));
 
 -- Members may update ONLY their own traveler row (mark settled, fix their
 -- pay handle). Row scope is the enforced boundary — it is their own row.
@@ -162,7 +181,7 @@ CREATE POLICY "member_update_own_traveler" ON travelers
   FOR UPDATE TO authenticated
   USING (
     travelers.user_id = auth.uid()
-    AND EXISTS (SELECT 1 FROM trip_members m WHERE m.trip_id = travelers.trip_id AND m.user_id = auth.uid())
+    AND public.is_trip_member(travelers.trip_id)
   )
   WITH CHECK (
     travelers.user_id = auth.uid()
@@ -175,7 +194,7 @@ DROP POLICY IF EXISTS "member_insert_split_expenses" ON split_expenses;
 CREATE POLICY "member_insert_split_expenses" ON split_expenses
   FOR INSERT TO authenticated
   WITH CHECK (
-    EXISTS (SELECT 1 FROM trip_members m WHERE m.trip_id = split_expenses.trip_id AND m.user_id = auth.uid())
+    public.is_trip_member(split_expenses.trip_id)
     AND paid_by IS NOT NULL
     AND EXISTS (
       SELECT 1 FROM travelers tv
