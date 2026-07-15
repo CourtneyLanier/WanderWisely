@@ -302,38 +302,19 @@ export default function GroupSplitSettings({ trip }: { trip: Trip }) {
             )}
           </div>
 
-          {/* Share with the group */}
+          {/* Share with the group — the actual switch lives in the Guest
+              Sharing tab list below, alongside Days/Route/etc. */}
           <div className="pt-3 border-t border-forest/10">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-forest">Let the group join via share link</span>
-              <button
-                role="switch"
-                aria-checked={shareSplit}
-                disabled={saving === 'share_split'}
-                onClick={() => {
-                  const next = !shareSplit
-                  setShareSplit(next)
-                  patchTrip({ share_split: next }, 'share_split')
-                }}
-                className={`relative w-11 h-6 rounded-full transition-colors ${
-                  shareSplit ? 'bg-sage' : 'bg-forest/20'
-                } ${saving === 'share_split' ? 'opacity-60 cursor-not-allowed' : ''}`}
-              >
-                <span
-                  className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                    shareSplit ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-            </div>
-            <p className="text-xs text-forest/40 mt-1">
-              Travelers open your guest link and log in (free) to claim their spot,
-              add their own expenses, and mark themselves settled. They never pay for the app.
-            </p>
-            {shareSplit && !trip.share_enabled && (
-              <p className="text-xs text-terracotta mt-1.5">
-                The share link itself is off — turn on "Share link enabled" in Guest
-                Sharing below so the group can actually open it.
+            {shareSplit && trip.share_enabled ? (
+              <p className="text-xs text-forest/40">
+                ✓ Split is shared — travelers open your guest link and log in (free) to
+                claim their spot, add expenses, and mark themselves settled. They never
+                pay for the app.
+              </p>
+            ) : (
+              <p className="text-xs text-gold">
+                To let the group join, {!trip.share_enabled && 'turn on "Share link enabled" and '}
+                check <span className="font-medium">💸 Split</span> in Guest Sharing below.
               </p>
             )}
           </div>
