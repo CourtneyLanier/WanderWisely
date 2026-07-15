@@ -79,6 +79,7 @@ export default function SettingsPage() {
   const [shareTabs, setShareTabs] = useState({
     share_days: true, share_route: true, share_wallet: false,
     share_budget: false, share_notes: false, share_map: false,
+    share_split: false,
   })
   const [savingTab, setSavingTab] = useState<string | null>(null)
 
@@ -492,6 +493,7 @@ export default function SettingsPage() {
       share_budget: trip.share_budget ?? false,
       share_notes: trip.share_notes ?? false,
       share_map: trip.share_map ?? false,
+      share_split: trip.share_split ?? false,
     })
   }, [trip])
 
@@ -925,6 +927,10 @@ export default function SettingsPage() {
                   { key: 'share_route',  icon: '🧭', label: 'Route',  note: 'drive legs and stops' },
                   { key: 'share_wallet', icon: '💳', label: 'Wallet', note: 'reservations — never costs' },
                   { key: 'share_budget', icon: '💰', label: 'Budget', note: 'budget totals and spending' },
+                  // Split tab is only joinable when Group Split is on for this trip
+                  ...(trip?.split_enabled
+                    ? [{ key: 'share_split', icon: '💸', label: 'Split', note: 'join, log expenses, settle up' }]
+                    : []),
                   { key: 'share_notes',  icon: '📝', label: 'Notes',  note: 'notes + document text/links' },
                   { key: 'share_map',    icon: '🗺️', label: 'Map',    note: 'states visited' },
                 ] as { key: keyof typeof shareTabs; icon: string; label: string; note: string }[]).map(
