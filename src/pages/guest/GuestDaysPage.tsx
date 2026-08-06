@@ -84,7 +84,7 @@ function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lod
               )}
             </div>
             {(day.start_location || day.end_location) && (
-              <p className="text-base font-medium text-forest mt-1 truncate">
+              <p className="text-base font-medium text-forest mt-1">
                 {day.start_location || '?'} → {day.end_location || '?'}
               </p>
             )}
@@ -203,7 +203,7 @@ function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lod
                     <div key={slot} className="flex items-center gap-3 px-3 py-2.5">
                       <span className="text-base">{MEAL_ICONS[slot]}</span>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-forest truncate">{meal.name}</p>
+                        <p className="text-sm font-medium text-forest">{meal.name}</p>
                         <div className="flex gap-2 mt-0.5">
                           {meal.time && <span className="text-xs text-forest/50">{fmtTime(meal.time)}</span>}
                           {meal.is_booked && <span className="text-xs text-sage">✓ Booked</span>}
@@ -233,7 +233,7 @@ function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lod
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-medium text-forest truncate">{a.name}</p>
+                          <p className="text-sm font-medium text-forest">{a.name}</p>
                           {a.type === 'side_quest' && (
                             <span className="text-xs text-gold bg-gold/10 rounded px-1.5 py-0.5 shrink-0">Side quest</span>
                           )}
@@ -241,7 +241,7 @@ function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lod
                         </div>
                         <div className="flex flex-wrap gap-x-2 mt-0.5">
                           {a.time && <span className="text-xs text-forest/50">{fmtTime(a.time)}</span>}
-                          {a.address && <span className="text-xs text-forest/50 truncate">{a.address}</span>}
+                          {a.address && <span className="text-xs text-forest/50">{a.address}</span>}
                         </div>
                       </div>
                       {a.url && (
