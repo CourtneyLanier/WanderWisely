@@ -590,11 +590,11 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
               <div className="flex items-start gap-2">
                 <span className="text-base shrink-0">🏨</span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-forest truncate">
+                  <p className="text-sm font-medium text-forest">
                     {r.title || r.provider || 'Hotel Reservation'}
                   </p>
                   {r.provider && r.title && (
-                    <p className="text-xs text-forest/50 truncate">{r.provider}</p>
+                    <p className="text-xs text-forest/50">{r.provider}</p>
                   )}
                   {r.confirmation_number && (
                     <p className="text-xs font-mono text-forest/40 mt-0.5">#{r.confirmation_number}</p>
@@ -604,7 +604,7 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
                       href={`https://maps.google.com/?q=${encodeURIComponent(r.address)}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-deep-teal underline mt-0.5 block truncate"
+                      className="text-xs text-deep-teal underline mt-0.5 block"
                     >
                       {r.address}
                     </a>
@@ -976,7 +976,7 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
               </div>
             ) : (
               <div key={meal.id} className="py-2.5 flex items-start justify-between">
-                <div className="flex items-start gap-2.5">
+                <div className="flex items-start gap-2.5 flex-1 min-w-0">
                   <span className="text-lg mt-0.5 shrink-0">
                     {MEAL_ICONS[meal.meal_slot as MealSlot] ?? '🍽️'}
                   </span>
@@ -985,11 +985,11 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
                       <span className="text-xs text-forest/40 capitalize">{meal.meal_slot}</span>
                       {meal.is_booked && <span className="text-xs text-sage">✓ Booked</span>}
                     </div>
-                    <p className="text-sm font-medium text-forest leading-tight truncate">{meal.name}</p>
+                    <p className="text-sm font-medium text-forest leading-tight">{meal.name}</p>
                     <div className="flex flex-wrap gap-x-3 mt-0.5">
                       {meal.time && <span className="text-xs text-forest/50">{meal.time.slice(0, 5)}</span>}
                       {meal.address && (
-                        <span className="text-xs text-forest/50 truncate max-w-[160px]">{meal.address}</span>
+                        <span className="text-xs text-forest/50">{meal.address}</span>
                       )}
                       {meal.estimated_cost != null && (
                         <span className="text-xs text-gold font-mono">${meal.estimated_cost}</span>
@@ -1033,10 +1033,10 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
                     </span>
                     {a.is_booked && <span className="text-xs text-sage font-medium">✓ Booked</span>}
                   </div>
-                  <p className="text-sm font-medium text-forest truncate">{a.name}</p>
+                  <p className="text-sm font-medium text-forest">{a.name}</p>
                   <div className="flex flex-wrap gap-x-3 mt-0.5">
                     {a.time && <span className="text-xs text-forest/50">{a.time.slice(0, 5)}</span>}
-                    {a.address && <span className="text-xs text-forest/50 truncate max-w-[180px]">{a.address}</span>}
+                    {a.address && <span className="text-xs text-forest/50">{a.address}</span>}
                     {a.estimated_cost != null && (
                       <span className="text-xs text-gold font-mono">${a.estimated_cost}</span>
                     )}
@@ -1121,8 +1121,8 @@ function WalletSection({ tripId, date }: { tripId: string; date: string | null }
           <div key={r.id} className="py-2.5 flex items-start gap-3">
             <span className="text-lg shrink-0 mt-0.5">{RES_ICONS[r.type ?? 'other']}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-forest truncate">{r.title || r.provider || r.type || '—'}</p>
-              {r.provider && <p className="text-xs text-forest/50 truncate">{r.provider}</p>}
+              <p className="text-sm font-medium text-forest">{r.title || r.provider || r.type || '—'}</p>
+              {r.provider && <p className="text-xs text-forest/50">{r.provider}</p>}
               <div className="flex flex-wrap gap-x-3 mt-0.5">
                 {r.time && <span className="text-xs text-forest/50">{fmtResTime(r.time)}</span>}
                 {r.confirmation_number && (
@@ -1134,7 +1134,7 @@ function WalletSection({ tripId, date }: { tripId: string; date: string | null }
                   href={`https://maps.google.com/?q=${encodeURIComponent(r.address)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-deep-teal underline mt-0.5 block truncate"
+                  className="text-xs text-deep-teal underline mt-0.5 block"
                 >
                   {r.address}
                 </a>

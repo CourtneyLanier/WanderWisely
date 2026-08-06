@@ -571,6 +571,34 @@ const ATTACH_SCRIPT = `
 
 // ─── Document assembly ───────────────────────────────────────────────────────
 
+// Compact layout used when printing — tighter than the screen styles so a full
+// day fits on one page. Emitted twice: once inside @media print, and once under
+// body.print-sim so FIT_SCRIPT can measure print-layout heights on screen.
+const printCompact = (p: string) => `
+${p} .slide{padding:0.3in 0.45in}
+${p} .slide-inner{zoom:var(--fitzoom,1)}
+${p} .brandbar{margin-bottom:10px}
+${p} .day-head{margin-bottom:4px}
+${p} .route{font-size:22px}
+${p} .drive-meta{font-size:11px;margin-top:3px}
+${p} .block{padding:9px 12px;margin-top:9px;border-radius:10px;box-shadow:none}
+${p} .block-label{margin-bottom:5px}
+${p} .block-title{font-size:14px}
+${p} .block-sub{font-size:11px}
+${p} .item{padding:4px 0}
+${p} .item-icon{font-size:14px}
+${p} .item-name{font-size:13px}
+${p} .item-meta{font-size:11px;margin-top:2px}
+${p} .pill-row{gap:6px;margin-top:6px}
+${p} .pill{padding:3px 9px;font-size:11px}
+${p} .meta-row{margin-top:6px}
+${p} .price-row{margin-top:6px;font-size:11px}
+${p} .conf{font-size:10px}
+${p} .maplink{font-size:11px}
+${p} .cost{font-size:11px}
+${p} .notes-text{font-size:12px}
+`
+
 const STYLES = `
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -592,7 +620,7 @@ a{color:var(--deep-teal);text-decoration:none}
   overflow-y:auto;position:relative;
 }
 .slide.active{display:flex}
-.slide-inner{width:100%;max-width:780px;margin:0 auto}
+.slide-inner{width:100%;max-width:780px;margin:0 auto;overflow-wrap:anywhere}
 /* Brand bar */
 .brandbar{display:flex;align-items:center;gap:8px;margin-bottom:22px;opacity:.75}
 .brandmark{width:26px;height:26px;border-radius:50%;object-fit:cover;
@@ -637,6 +665,7 @@ a{color:var(--deep-teal);text-decoration:none}
 .pill b{font-weight:600;color:rgba(45,61,30,.5);font-size:10px;text-transform:uppercase;
   letter-spacing:.08em;margin-right:6px}
 .meta-row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.meta-row>*{min-width:0;max-width:100%}
 .price-row{margin-top:10px;font-family:'DM Mono',monospace;font-size:13px;color:var(--gold)}
 .conf{font-family:'DM Mono',monospace;font-size:12px;color:var(--deep-teal);
   background:rgba(45,90,61,.08);border-radius:5px;padding:3px 7px}
@@ -654,6 +683,7 @@ a{color:var(--deep-teal);text-decoration:none}
 .item-name{font-weight:500;font-size:15px;color:var(--forest);margin-top:1px}
 .item-meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px;
   font-size:13px;color:rgba(45,61,30,.6)}
+.item-meta>*{min-width:0;max-width:100%}
 .item-meta .dot{color:rgba(45,61,30,.3)}
 .notes-text{font-size:14px;color:rgba(45,61,30,.7);font-style:italic;white-space:pre-wrap}
 /* Attached files */
@@ -682,12 +712,11 @@ a{color:var(--deep-teal);text-decoration:none}
 .hint{position:fixed;top:14px;right:16px;font-size:11px;color:rgba(45,61,30,.4);z-index:50}
 /* Print — one slide per page */
 @media print{
-  .controls,.hint,.brandbar span{}
   .no-print{display:none!important}
   body{background:#fff}
   .deck{width:auto}
   .slide{display:flex!important;min-height:auto;overflow:visible;
-    page-break-after:always;padding:0.35in 0.5in}
+    page-break-after:always}
   .slide:last-child{page-break-after:auto}
   .block{break-inside:avoid}
   .print-only{display:block}
@@ -695,8 +724,13 @@ a{color:var(--deep-teal);text-decoration:none}
   .cover-logo,.brandmark{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .cover{min-height:9in;justify-content:center}
   a{color:var(--forest)}
+  ${printCompact('')}
   @page{margin:0.4in}
 }
+/* Off-screen print simulation — FIT_SCRIPT toggles this to measure overflow */
+body.print-sim .deck{position:absolute;left:-9999px;top:0;width:7.4in}
+body.print-sim .slide{display:flex!important;min-height:0;overflow:visible}
+${printCompact('body.print-sim')}
 `
 
 const SLIDESHOW_SCRIPT = `
@@ -740,6 +774,35 @@ const LOGO_SCRIPT = `
   var c=document.querySelector('img.cover-logo');
   if(!c)return;
   [].slice.call(document.querySelectorAll('img.brandmark')).forEach(function(m){m.src=c.src});
+})();
+`
+
+// Guarantees each content slide fits on one printed page. Right before print,
+// the deck is laid out off-screen with the print styles (body.print-sim), each
+// slide is measured, and any that would spill onto a second page gets its
+// content shrunk via the --fitzoom variable (floored at 0.5 for readability).
+// The cover and full-page image slides are excluded — CSS already caps them.
+// Runs on beforeprint, so it covers both the auto-print path and manual Ctrl+P.
+const FIT_SCRIPT = `
+(function(){
+  var PAGE_H=974; /* 10.15in at 96dpi — inside Letter and A4 with 0.4in margins */
+  function fit(){
+    document.body.classList.add('print-sim');
+    [].slice.call(document.querySelectorAll('.slide')).forEach(function(s){
+      if(s.classList.contains('cover')||s.classList.contains('attachment'))return;
+      s.style.removeProperty('--fitzoom');
+      var h=s.scrollHeight,z=1;
+      for(var k=0;k<4&&h>PAGE_H&&z>0.5;k++){
+        z=Math.max(0.5,z*PAGE_H/h*0.985);
+        s.style.setProperty('--fitzoom',z.toFixed(3));
+        h=s.scrollHeight;
+      }
+    });
+    document.body.classList.remove('print-sim');
+  }
+  window.addEventListener('beforeprint',fit);
+  var mq=window.matchMedia&&window.matchMedia('print');
+  if(mq&&mq.addListener)mq.addListener(function(m){if(m.matches)fit()});
 })();
 `
 
@@ -793,7 +856,7 @@ export function buildExportHtml(data: ExportData, opts: ExportOptions, autoPrint
   <span class="counter" id="counter">1 / 1</span>
   <button id="next" aria-label="Next">›</button>
 </div>
-<script>${SLIDESHOW_SCRIPT}${data.logoDataUri ? LOGO_SCRIPT : ''}${hasAttachments ? ATTACH_SCRIPT : ''}${autoPrint ? AUTOPRINT_SCRIPT : ''}</script>
+<script>${SLIDESHOW_SCRIPT}${data.logoDataUri ? LOGO_SCRIPT : ''}${hasAttachments ? ATTACH_SCRIPT : ''}${FIT_SCRIPT}${autoPrint ? AUTOPRINT_SCRIPT : ''}</script>
 </body>
 </html>`
 }

@@ -311,7 +311,7 @@ export default function GuestHomePage() {
                   <div key={slot} className="flex items-center gap-3 px-3 py-2.5">
                     <span className="text-base">{MEAL_ICONS[slot]}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-forest truncate">{meal.name}</p>
+                      <p className="text-sm font-medium text-forest">{meal.name}</p>
                       <div className="flex gap-2 mt-0.5">
                         {meal.time && <span className="text-xs text-forest/50">{fmtTime(meal.time)}</span>}
                         {meal.is_booked && <span className="text-xs text-sage">✓ Booked</span>}
