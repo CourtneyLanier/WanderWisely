@@ -85,7 +85,7 @@ export default function SuggestStopsSection({
           </button>
           {loading && (
             <p className="text-[11px] text-forest/40 animate-pulse">
-              Searching the web for local gems — takes about a minute.
+              Mapping the driving route, then searching for local gems — takes about a minute.
             </p>
           )}
         </div>

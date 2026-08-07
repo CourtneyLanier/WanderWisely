@@ -83,6 +83,8 @@ If a field cannot be determined, use null.`
 
 const STOPS_SYSTEM = `You are a road-trip scout for a family travel app. Given a driving route, find genuinely interesting stops along or near it: quirky roadside attractions, beloved local restaurants and diners, great local coffee shops, farm stands, scenic pull-offs, and one-of-a-kind local shops.
 
+When the user message lists the actual GPS driving corridor (the roads and waypoint towns the route follows), treat it as a hard constraint: every stop must be in or very near one of those towns or right along one of those roads. Never include a place just because it is geographically between the endpoints — if it is not near the driving corridor, adding it means a long detour. A stop should add at most about 20 minutes of total detour to the day's drive.
+
 Use web search to make sure the places are real and currently open — do NOT include anything that is permanently closed, and prefer well-loved local gems over national chains. Everything must be family-friendly. Be fast: run at most 3 quick searches, then answer immediately from what you found plus what you already know.
 
 Return ONLY a valid JSON array (no preamble, no markdown fences) of 6 to 8 stops, ordered from the start of the drive to the end, with a mix of categories:
@@ -92,13 +94,144 @@ Return ONLY a valid JSON array (no preamble, no markdown fences) of 6 to 8 stops
     "category": "quirky" | "food" | "coffee" | "scenic" | "shop" | "attraction",
     "location": "Town, ST",
     "description": "1-2 sentences on what it is and why it's worth the stop",
-    "detour": "how far off the route it is, e.g. 'right on US-89' or 'about 10 min off the highway'",
+    "detour": "how far off the route it is and roughly how much time it adds, e.g. 'right on US-89 — no real detour' or 'about 10 min off the highway (adds ~20 min)'",
     "address": "street address if known, otherwise null",
     "website": "the place's official website URL if you saw one in your search results, otherwise null"
   }
 ]
 
 website: only include a URL you actually saw in search results — never guess or construct one. Prefer the place's own site over review/aggregator pages.`
+
+// ── Route mapping (free OSM services, no API key) ─────────────────────────────
+// Before asking Claude for stops, we map the actual driving route so the
+// suggestions follow the roads a GPS would pick, not a straight line between
+// the endpoints. Nominatim geocodes the endpoints and names the towns along
+// the way; OSRM's public demo server computes the driving route between them.
+// Everything here is best-effort: any failure returns null and 'stops' mode
+// falls back to the old endpoint-only prompt.
+
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org'
+const OSRM_URL = 'https://router.project-osrm.org'
+// Nominatim requires an identifying User-Agent and max ~1 request/second.
+const GEO_HEADERS = { 'User-Agent': 'WanderWisely/1.0 (family road-trip planner)' }
+const NOMINATIM_GAP_MS = 1100
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// deno-lint-ignore no-explicit-any
+async function fetchJson(url: string, timeoutMs: number): Promise<any | null> {
+  try {
+    const res = await fetch(url, { headers: GEO_HEADERS, signal: AbortSignal.timeout(timeoutMs) })
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
+async function geocode(place: string): Promise<{ lat: number; lon: number } | null> {
+  const data = await fetchJson(
+    `${NOMINATIM_URL}/search?format=jsonv2&limit=1&q=${encodeURIComponent(place)}`,
+    8000
+  )
+  const hit = Array.isArray(data) ? data[0] : null
+  if (!hit?.lat || !hit?.lon) return null
+  const lat = parseFloat(hit.lat)
+  const lon = parseFloat(hit.lon)
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null
+}
+
+// zoom=14 resolves small highway towns; county is the fallback for empty
+// stretches (still useful alongside the road names).
+async function reverseTown(lat: number, lon: number): Promise<string | null> {
+  const data = await fetchJson(
+    `${NOMINATIM_URL}/reverse?format=jsonv2&zoom=14&lat=${lat}&lon=${lon}`,
+    8000
+  )
+  const a = data?.address
+  if (!a) return null
+  const town = a.city ?? a.town ?? a.village ?? a.hamlet ?? a.municipality ?? a.county
+  return town ? (a.state ? `${town}, ${a.state}` : town) : null
+}
+
+function haversineMiles(a: [number, number], b: [number, number]): number {
+  const R = 3958.8
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(b[1] - a[1])
+  const dLon = toRad(b[0] - a[0])
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(h))
+}
+
+// Pick n points spaced evenly by road distance along the route polyline
+// (index-based sampling would bunch up where the geometry is dense).
+function samplePoints(coords: [number, number][], n: number): [number, number][] {
+  const cumulative: number[] = [0]
+  for (let i = 1; i < coords.length; i++) {
+    cumulative.push(cumulative[i - 1] + haversineMiles(coords[i - 1], coords[i]))
+  }
+  const total = cumulative[cumulative.length - 1]
+  if (total === 0) return []
+  const points: [number, number][] = []
+  for (let k = 1; k <= n; k++) {
+    const target = (total * k) / (n + 1)
+    const idx = cumulative.findIndex((d) => d >= target)
+    points.push(coords[idx === -1 ? coords.length - 1 : idx])
+  }
+  return points
+}
+
+interface RouteContext {
+  towns: string[]
+  roads: string[]
+  miles: number
+  driveText: string
+}
+
+async function getRouteContext(from: string, to: string): Promise<RouteContext | null> {
+  const start = await geocode(from)
+  await sleep(NOMINATIM_GAP_MS)
+  const end = await geocode(to)
+  if (!start || !end) return null
+
+  const data = await fetchJson(
+    `${OSRM_URL}/route/v1/driving/${start.lon},${start.lat};${end.lon},${end.lat}` +
+      `?overview=full&geometries=geojson&steps=true`,
+    12000
+  )
+  const route = data?.routes?.[0]
+  const coords = route?.geometry?.coordinates as [number, number][] | undefined
+  if (!route || !Array.isArray(coords) || coords.length < 2) return null
+
+  // Major roads: names/refs of any step longer than ~10 miles.
+  const roads: string[] = []
+  // deno-lint-ignore no-explicit-any
+  for (const leg of route.legs ?? []) {
+    // deno-lint-ignore no-explicit-any
+    for (const step of leg.steps ?? []) {
+      if ((step.distance ?? 0) < 16000) continue
+      const label = (step.ref || step.name || '').split(';')[0].trim()
+      if (label && !roads.includes(label)) roads.push(label)
+    }
+  }
+
+  const miles = Math.round(route.distance / 1609.34)
+  const totalMin = Math.round(route.duration / 60)
+  const driveText = totalMin >= 60 ? `${Math.floor(totalMin / 60)} h ${totalMin % 60} min` : `${totalMin} min`
+
+  // Name the towns at a few evenly spaced points along the actual route.
+  const towns: string[] = []
+  for (const [lon, lat] of samplePoints(coords, miles > 60 ? 5 : 3)) {
+    await sleep(NOMINATIM_GAP_MS)
+    const town = await reverseTown(lat, lon)
+    if (town && !towns.includes(town)) towns.push(town)
+  }
+  if (towns.length === 0) return null
+
+  return { towns, roads: roads.slice(0, 6), miles, driveText }
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -146,8 +279,23 @@ Deno.serve(async (req) => {
     }
     const date = typeof body.date === 'string' ? body.date : null
 
+    // Map the real driving route so suggestions follow the roads, not a
+    // straight line. Falls back to the endpoint-only prompt if mapping fails.
+    let routeCtx: RouteContext | null = null
+    try {
+      routeCtx = await getRouteContext(from, to)
+    } catch {
+      routeCtx = null
+    }
+
     const userText =
       `Driving route: from ${from} to ${to}.` +
+      (routeCtx
+        ? `\nThe actual GPS driving route is ${routeCtx.miles} miles (about ${routeCtx.driveText})` +
+          (routeCtx.roads.length ? `, mainly via ${routeCtx.roads.join(', ')}` : '') +
+          `, passing through: ${routeCtx.towns.join(' → ')}.` +
+          `\nOnly suggest stops on or very near this driving corridor — in or near the towns listed, or right along the roads named. Skip anything that is between the endpoints as the crow flies but not near the actual roads.`
+        : '') +
       (date ? ` Travel date: ${date} — skip anything that would be closed then (seasonal closures, day of week).` : '')
 
     const messages: Array<{ role: string; content: unknown }> = [
