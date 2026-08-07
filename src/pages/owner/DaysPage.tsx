@@ -3,6 +3,7 @@ import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { calcDriveTime } from '@/lib/routing'
+import { dayTitle } from '@/lib/dayTitle'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
 import type { Day } from '@/types'
@@ -306,7 +307,7 @@ export default function DaysPage() {
                     {(effectiveStart || effectiveEnd) ? (
                       <div className="flex items-center gap-1.5">
                         <p className={`text-sm font-medium ${routeFromWallet ? 'text-forest/60' : 'text-forest'}`}>
-                          {effectiveStart || '?'} → {effectiveEnd || '?'}
+                          {dayTitle(effectiveStart, effectiveEnd)}
                         </p>
                         {routeFromWallet && (
                           <span className="text-[10px] text-deep-teal/60 bg-deep-teal/8 rounded px-1 py-px shrink-0">wallet</span>

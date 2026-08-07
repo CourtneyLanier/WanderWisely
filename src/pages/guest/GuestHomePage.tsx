@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { dayTitle } from '@/lib/dayTitle'
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -157,7 +158,7 @@ export default function GuestHomePage() {
             <p className="section-label mb-3">Day 1 preview</p>
             {(day1.start_location || day1.end_location) && (
               <p className="text-base font-medium text-forest">
-                {day1.start_location || '?'} → {day1.end_location || '?'}
+                {dayTitle(day1.start_location, day1.end_location)}
               </p>
             )}
             {(day1.departure_time || day1.drive_miles || day1.drive_hours) && (

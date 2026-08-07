@@ -8,6 +8,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { getDocFileBlob } from '@/lib/docFiles'
+import { dayRoute } from '@/lib/dayTitle'
 import type { Trip, Day, Lodging, Activity, Reservation, MealSlot, TripDocument } from '@/types'
 
 // ─── Options ─────────────────────────────────────────────────────────────────
@@ -366,8 +367,11 @@ function walletLine(r: Reservation): string {
 }
 
 function daySlide(data: ExportData, day: Day, opts: ExportOptions): string {
-  const route = (day.start_location || day.end_location)
-    ? `${esc(day.start_location || '?')} <span class="arrow">→</span> ${esc(day.end_location || '?')}`
+  const { from, to, layover } = dayRoute(day.start_location, day.end_location)
+  const route = (from || to)
+    ? layover
+      ? esc(from)
+      : `${esc(from || '?')} <span class="arrow">→</span> ${esc(to || '?')}`
     : '<span class="muted">No route set</span>'
 
   const driveBits: string[] = []
