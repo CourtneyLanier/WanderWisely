@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { dayTitle } from '@/lib/dayTitle'
 import { useAppStore } from '@/store/useAppStore'
 import SuggestStopsSection from '@/components/days/SuggestStopsSection'
 import type { Day, Lodging, Activity, LodgingType, ActivityType, MealSlot, Reservation } from '@/types'
@@ -140,7 +141,7 @@ function DayHeader({ day }: { day: Day }) {
           <p className="text-sm text-forest/60 mt-1">{fmt(day.date) || 'Date not set'}</p>
           {!editing && (day.start_location || day.end_location) && (
             <p className="text-base font-medium text-forest mt-0.5">
-              {day.start_location || '?'} → {day.end_location || '?'}
+              {dayTitle(day.start_location, day.end_location)}
             </p>
           )}
           {!editing && (day.drive_miles || day.drive_hours || day.departure_time) && (

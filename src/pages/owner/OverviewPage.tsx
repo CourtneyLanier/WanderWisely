@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { dayTitle } from '@/lib/dayTitle'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
 import SettleBanner from '@/components/split/SettleBanner'
@@ -71,7 +72,7 @@ function TodayCard({ day }: { day: Day }) {
           <p className="section-label mb-2">Today's Drive</p>
           {(day.start_location || day.end_location) && (
             <p className="text-base font-medium text-forest">
-              {day.start_location || '?'} → {day.end_location || '?'}
+              {dayTitle(day.start_location, day.end_location)}
             </p>
           )}
           <div className="flex flex-wrap gap-x-3 mt-1 text-sm text-forest/60">

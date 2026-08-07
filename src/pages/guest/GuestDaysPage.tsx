@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { dayTitle } from '@/lib/dayTitle'
 
 // ── types (local — guest functions return plain objects, not full Row types) ───
 
@@ -85,7 +86,7 @@ function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lod
             </div>
             {(day.start_location || day.end_location) && (
               <p className="text-base font-medium text-forest mt-1">
-                {day.start_location || '?'} → {day.end_location || '?'}
+                {dayTitle(day.start_location, day.end_location)}
               </p>
             )}
             {(day.departure_time || day.drive_miles || day.drive_hours) && (
