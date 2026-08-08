@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { dayTitle } from '@/lib/dayTitle'
+import DayWeatherCard from '@/components/days/DayWeatherCard'
 
 // ── types (local — guest functions return plain objects, not full Row types) ───
 
@@ -53,7 +54,10 @@ const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner']
 
 // ── DayCard ────────────────────────────────────────────────────────────────────
 
-function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lodging: GLodging | null; activities: GActivity[]; isToday?: boolean }) {
+function DayCard({ day, lodging, activities, isToday = false, weatherFrom, weatherTo }: {
+  day: GDay; lodging: GLodging | null; activities: GActivity[]; isToday?: boolean
+  weatherFrom: string | null; weatherTo: string | null
+}) {
   const [expanded, setExpanded] = useState(isToday)
 
   const meals = activities.filter((a) => a.type === 'meal')
@@ -98,6 +102,7 @@ function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lod
                 {day.drive_hours ? `${day.drive_hours} hrs drive` : ''}
               </p>
             )}
+            <DayWeatherCard variant="compact" from={weatherFrom} to={weatherTo} date={day.date} />
           </div>
           {hasContent && (
             <span className="text-forest/30 text-sm mt-1 shrink-0">{expanded ? '▲' : '▼'}</span>
@@ -108,6 +113,9 @@ function DayCard({ day, lodging, activities, isToday = false }: { day: GDay; lod
       {/* Expanded content */}
       {expanded && (
         <div className="mt-3 pt-3 border-t border-forest/10 space-y-4">
+
+          {/* Weather — full card with badges; shares the compact strip's cached queries */}
+          <DayWeatherCard from={weatherFrom} to={weatherTo} date={day.date} />
 
           {/* Lodging */}
           {lodging && (
@@ -348,6 +356,26 @@ export default function GuestDaysPage() {
     enabled: !!trip,
   })
 
+  // Reservations — for the wallet hotel-address fallback the owner pages use
+  // for routes. Key matches GuestWalletPage so the cache is shared.
+  const { data: reservations = [] } = useQuery({
+    queryKey: ['guest_reservations', shareCode],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('guest_get_reservations', { p_share_code: shareCode! })
+      if (error) throw error
+      return (data ?? []) as { type: string | null; date: string | null; address: string | null }[]
+    },
+    enabled: !!trip,
+  })
+
+  const hotelByDate = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const r of reservations) {
+      if (r.type === 'hotel' && r.date && r.address) map[r.date] = r.address
+    }
+    return map
+  }, [reservations])
+
   const lodgingByDay = useMemo(() => {
     const map: Record<string, GLodging> = {}
     for (const l of allLodging) map[l.day_id] = l
@@ -391,9 +419,14 @@ export default function GuestDaysPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {days.map((day) => {
+          {days.map((day, i) => {
             const today = new Date().toISOString().split('T')[0]
             const isToday = !!day.date && day.date === today
+            const prevDay = i > 0 ? days[i - 1] : null
+            const weatherFrom = day.start_location
+              || (prevDay?.date ? hotelByDate[prevDay.date] ?? null : null)
+            const weatherTo = day.end_location
+              || (day.date ? hotelByDate[day.date] ?? null : null)
             return (
               <DayCard
                 key={day.id}
@@ -401,6 +434,8 @@ export default function GuestDaysPage() {
                 lodging={lodgingByDay[day.id] ?? null}
                 activities={activitiesByDay[day.id] ?? []}
                 isToday={isToday}
+                weatherFrom={weatherFrom}
+                weatherTo={weatherTo}
               />
             )
           })}

@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { dayTitle } from '@/lib/dayTitle'
 import { useAppStore } from '@/store/useAppStore'
 import SuggestStopsSection from '@/components/days/SuggestStopsSection'
+import DayWeatherCard from '@/components/days/DayWeatherCard'
 import type { Day, Lodging, Activity, LodgingType, ActivityType, MealSlot, Reservation } from '@/types'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -1168,6 +1169,31 @@ export default function DayDetailPage() {
 
   const queryClient = useQueryClient()
 
+  // All days + hotel reservations — for the same wallet-address route fallback
+  // the Days list and Route page use, so weather shows even when the route
+  // only exists via a hotel reservation. Query keys match DaysPage to share cache.
+  const { data: allDays = [] } = useQuery({
+    queryKey: ['days', tripId],
+    queryFn: async (): Promise<Day[]> => {
+      const { data, error } = await supabase
+        .from('days').select('*').eq('trip_id', tripId!).order('day_number')
+      if (error) throw error
+      return data ?? []
+    },
+    enabled: !!tripId,
+  })
+
+  const { data: hotelRes = [] } = useQuery({
+    queryKey: ['hotel-res-days', tripId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('reservations').select('date, address')
+        .eq('trip_id', tripId!).eq('type', 'hotel').not('address', 'is', null)
+      return (data ?? []) as { date: string; address: string }[]
+    },
+    enabled: !!tripId,
+  })
+
   const deleteDayMutation = useMutation({
     mutationFn: async () => {
       const { error } = await supabase.from('days').delete().eq('id', dayId!)
@@ -1196,6 +1222,20 @@ export default function DayDetailPage() {
     )
   }
 
+  // Effective route for the weather card — fall back to wallet hotel addresses
+  // when day locations aren't set (same logic as DaysPage / RoutePage).
+  const hotelByDate: Record<string, string> = {}
+  for (const r of hotelRes) {
+    if (r.date && r.address) hotelByDate[r.date] = r.address
+  }
+  const sortedDays = [...allDays].sort((a, b) => a.day_number - b.day_number)
+  const dayIndex = sortedDays.findIndex((d) => d.id === day.id)
+  const prevDay = dayIndex > 0 ? sortedDays[dayIndex - 1] : null
+  const weatherFrom = day.start_location
+    || (prevDay?.date ? hotelByDate[prevDay.date] ?? null : null)
+  const weatherTo = day.end_location
+    || (day.date ? hotelByDate[day.date] ?? null : null)
+
   return (
     <div className="p-4 pt-4 pb-10">
       {/* Back + delete row */}
@@ -1214,6 +1254,7 @@ export default function DayDetailPage() {
       </div>
 
       <DayHeader day={day} />
+      <DayWeatherCard from={weatherFrom} to={weatherTo} date={day.date} />
       <LodgingSection dayId={day.id} tripId={tripId} date={day.date} />
       <ActivitiesSection dayId={day.id} />
       {day.start_location && day.end_location && day.start_location !== day.end_location && (
