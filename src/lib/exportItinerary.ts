@@ -6,9 +6,11 @@
 //
 // Branded with the round WanderWisely logo only. Never references 3Strand.
 
+import type { QueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { getDocFileBlob } from '@/lib/docFiles'
 import { dayRoute } from '@/lib/dayTitle'
+import { getSlotReadingCached, type WeatherReading } from '@/lib/weather'
 import type { Trip, Day, Lodging, Activity, Reservation, MealSlot, TripDocument } from '@/types'
 
 // ─── Options ─────────────────────────────────────────────────────────────────
@@ -24,6 +26,8 @@ export interface ExportOptions {
   includePrices: boolean
   /** Embed files attached to trip documents (PDFs/images) into the export. */
   includeFiles: boolean
+  /** Add morning/night weather to each day slide (snapshot at export time). */
+  includeWeather: boolean
 }
 
 // ─── Gathered data ───────────────────────────────────────────────────────────
@@ -37,6 +41,12 @@ export interface ExportDocFile {
   base64: string
 }
 
+/** Weather snapshot for one day slide; either slot may be unavailable. */
+export interface ExportDayWeather {
+  morning: WeatherReading | null
+  night: WeatherReading | null
+}
+
 export interface ExportData {
   trip: Trip
   days: Day[]
@@ -47,6 +57,10 @@ export interface ExportData {
   docFiles: ExportDocFile[]
   /** Titles of attached files that could not be loaded for embedding. */
   docFilesMissing: string[]
+  /** Weather snapshots keyed by day id; empty when weather wasn't gathered. */
+  weatherByDay: Record<string, ExportDayWeather>
+  /** Human-readable date the weather values were captured, e.g. "Aug 8, 2026". */
+  weatherAsOf: string | null
 }
 
 // ─── Small helpers ───────────────────────────────────────────────────────────
@@ -172,7 +186,45 @@ async function gatherDocFiles(
   return { docFiles, docFilesMissing }
 }
 
-export async function gatherExportData(tripId: string, includeFiles = false): Promise<ExportData> {
+/**
+ * Morning/night weather per day, using the same wallet hotel-address fallback
+ * for missing day locations as the Days list and Route page. Reads the app's
+ * cached readings first (so a warm cache exports instantly and offline);
+ * uncached days fetch live and unreachable ones are simply omitted.
+ */
+async function gatherWeather(
+  queryClient: QueryClient,
+  days: Day[],
+  reservationsByDate: Record<string, Reservation[]>
+): Promise<Record<string, ExportDayWeather>> {
+  const hotelAddr = (date: string | null): string | null => {
+    if (!date) return null
+    return (reservationsByDate[date] ?? []).find((r) => r.type === 'hotel' && r.address)?.address ?? null
+  }
+
+  const weatherByDay: Record<string, ExportDayWeather> = {}
+  await Promise.all(
+    days.map(async (day, i) => {
+      const prevDay = i > 0 ? days[i - 1] : null
+      const from = day.start_location || (prevDay ? hotelAddr(prevDay.date) : null)
+      const to = day.end_location || hotelAddr(day.date)
+      if (!from || !to || !day.date) return
+      const [morning, night] = await Promise.all([
+        getSlotReadingCached(queryClient, from, day.date, 'morning'),
+        getSlotReadingCached(queryClient, to, day.date, 'night'),
+      ])
+      if (morning || night) weatherByDay[day.id] = { morning, night }
+    })
+  )
+  return weatherByDay
+}
+
+export async function gatherExportData(
+  tripId: string,
+  includeFiles = false,
+  /** Pass the app's QueryClient to include per-day weather snapshots. */
+  weatherClient: QueryClient | null = null
+): Promise<ExportData> {
   const [tripRes, daysRes, reservationsRes] = await Promise.all([
     supabase.from('trips').select('*').eq('id', tripId).single(),
     supabase.from('days').select('*').eq('trip_id', tripId).order('day_number'),
@@ -213,9 +265,16 @@ export async function gatherExportData(tripId: string, includeFiles = false): Pr
     ? await gatherDocFiles(tripId)
     : { docFiles: [], docFilesMissing: [] }
 
+  const weatherByDay = weatherClient
+    ? await gatherWeather(weatherClient, days, reservationsByDate)
+    : {}
+  const weatherAsOf = Object.keys(weatherByDay).length
+    ? new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null
+
   return {
     trip, days, lodgingByDay, activitiesByDay, reservationsByDate,
-    logoDataUri, docFiles, docFilesMissing,
+    logoDataUri, docFiles, docFilesMissing, weatherByDay, weatherAsOf,
   }
 }
 
@@ -266,6 +325,8 @@ function coverSlide(data: ExportData, opts: ExportOptions): string {
       <h1>${esc(trip.name)}</h1>
       ${dates ? `<p class="cover-dates">${esc(dates)}</p>` : ''}
       ${dayCount ? `<p class="cover-meta">${dayCount} day${dayCount !== 1 ? 's' : ''}</p>` : ''}
+      ${opts.includeWeather && data.weatherAsOf
+        ? `<p class="cover-meta">Weather as of ${esc(data.weatherAsOf)}</p>` : ''}
     </div>
   </section>`
 }
@@ -366,6 +427,29 @@ function walletLine(r: Reservation): string {
   </div>`
 }
 
+/** "☀️ 7 AM 54° · 12% rain — 🌙 9 PM 41° · 4% rain" + a source note. */
+function weatherLine(data: ExportData, day: Day): string {
+  const w = data.weatherByDay[day.id]
+  if (!w) return ''
+
+  const slot = (icon: string, label: string, r: WeatherReading | null): string => {
+    if (!r || r.tempF === null) return ''
+    const rain = r.rainPct !== null ? ` · ${Math.round(r.rainPct)}% rain` : ''
+    return `${icon} ${label} ${Math.round(r.tempF)}°${rain}`
+  }
+  const parts = [slot('☀️', '7 AM', w.morning), slot('🌙', '9 PM', w.night)].filter(Boolean)
+  if (!parts.length) return ''
+
+  const anyNormal = w.morning?.source === 'normal' || w.night?.source === 'normal'
+  const note = anyNormal
+    ? 'typical for this date'
+    : data.weatherAsOf ? `forecast as of ${data.weatherAsOf}` : ''
+
+  return `<p class="weather-meta${anyNormal ? ' weather-normal' : ''}">${esc(parts.join(' — '))}${
+    note ? `<span class="weather-note">${esc(note)}</span>` : ''
+  }</p>`
+}
+
 function daySlide(data: ExportData, day: Day, opts: ExportOptions): string {
   const { from, to, layover } = dayRoute(day.start_location, day.end_location)
   const route = (from || to)
@@ -405,6 +489,7 @@ function daySlide(data: ExportData, day: Day, opts: ExportOptions): string {
       </div>
       <p class="route">${route}</p>
       ${driveBits.length ? `<p class="drive-meta">${esc(driveBits.join(' · '))}</p>` : ''}
+      ${opts.includeWeather ? weatherLine(data, day) : ''}
       ${lodgingBlock(data, day, opts)}
       ${plansBlock}
       ${mealsBlock}
@@ -585,6 +670,8 @@ ${p} .brandbar{margin-bottom:10px}
 ${p} .day-head{margin-bottom:4px}
 ${p} .route{font-size:22px}
 ${p} .drive-meta{font-size:11px;margin-top:3px}
+${p} .weather-meta{font-size:11px;margin-top:3px}
+${p} .weather-note{font-size:10px}
 ${p} .block{padding:9px 12px;margin-top:9px;border-radius:10px;box-shadow:none}
 ${p} .block-label{margin-bottom:5px}
 ${p} .block-title{font-size:14px}
@@ -653,6 +740,9 @@ a{color:var(--deep-teal);text-decoration:none}
   color:var(--forest);line-height:1.14;margin-top:6px}
 .route .arrow{color:var(--gold);margin:0 6px}
 .drive-meta{color:rgba(45,61,30,.5);font-size:13px;margin-top:6px}
+.weather-meta{color:rgba(45,61,30,.65);font-size:13px;margin-top:6px}
+.weather-meta.weather-normal{color:rgba(45,61,30,.45)}
+.weather-note{font-size:11px;font-style:italic;color:rgba(45,61,30,.4);margin-left:8px}
 .muted{color:rgba(45,61,30,.4);font-style:italic}
 /* Blocks */
 .block{background:var(--white-warm);border:1px solid rgba(45,61,30,.11);border-radius:14px;

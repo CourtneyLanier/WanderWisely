@@ -2,7 +2,7 @@
 // historical normals beyond that. No API key on the free (non-commercial)
 // tier; base URLs live in env vars so the commercial tier is a config change.
 
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, type QueryClient } from '@tanstack/react-query'
 import { get as idbGet, set as idbSet } from 'idb-keyval'
 import { geocode } from '@/lib/routing'
 
@@ -264,6 +264,30 @@ export async function getDayWeather(
     getSlotReading(endLocation, dateISO, 'night'),
   ])
   return { morning, night }
+}
+
+/**
+ * Cache-aware reading for non-hook callers (the itinerary export). Returns the
+ * cached reading if one exists — even stale, which is fine for a snapshot —
+ * otherwise fetches and seeds the cache. Never throws: offline-and-uncached
+ * resolves to null so the export simply omits that day's weather.
+ */
+export async function getSlotReadingCached(
+  queryClient: QueryClient,
+  location: string,
+  dateISO: string,
+  slot: 'morning' | 'night'
+): Promise<WeatherReading | null> {
+  const key = ['weather', normalizeLocation(location), dateISO, slot]
+  const cached = queryClient.getQueryData<WeatherReading>(key)
+  if (cached) return cached
+  try {
+    const fresh = await getSlotReading(location, dateISO, slot)
+    queryClient.setQueryData(key, fresh)
+    return fresh
+  } catch {
+    return null
+  }
 }
 
 // ─── React Query hooks ───────────────────────────────────────────────────────
