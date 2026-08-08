@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   gatherExportData,
   buildExportHtml,
@@ -35,14 +36,17 @@ function Seg({
 }
 
 export default function ItineraryExport({ tripId }: { tripId: string }) {
+  const queryClient = useQueryClient()
   const [content, setContent] = useState<ExportContent>('combined')
   const [mealStyle, setMealStyle] = useState<MealStyle>('by_day')
   const [includePrices, setIncludePrices] = useState(false)
   const [includeFiles, setIncludeFiles] = useState(true)
+  const [includeWeather, setIncludeWeather] = useState(true)
   const [busy, setBusy] = useState<null | 'html' | 'pdf'>(null)
   const [error, setError] = useState('')
 
   const showMealStyle = content !== 'itinerary'
+  const showWeather = content !== 'meal_plan'
 
   const fileSuffix =
     content === 'meal_plan' ? 'meal_plan' : content === 'combined' ? 'itinerary_meals' : 'itinerary'
@@ -51,8 +55,9 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
     setBusy(kind)
     setError('')
     try {
-      const data = await gatherExportData(tripId, includeFiles)
-      const opts = { content, mealStyle, includePrices, includeFiles }
+      const wantWeather = includeWeather && content !== 'meal_plan'
+      const data = await gatherExportData(tripId, includeFiles, wantWeather ? queryClient : null)
+      const opts = { content, mealStyle, includePrices, includeFiles, includeWeather: wantWeather }
       if (kind === 'html') {
         const html = buildExportHtml(data, opts, false)
         downloadHtml(html, `${safeFileName(data.trip.name)}_${fileSuffix}.html`)
@@ -128,6 +133,33 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
           />
         </button>
       </label>
+
+      {/* Weather toggle */}
+      {showWeather && (
+        <label className="flex items-center justify-between mb-3 cursor-pointer">
+          <span className="text-sm text-forest">
+            Include weather
+            <span className="block text-[11px] text-forest/45">
+              Morning &amp; night readings on each day — snapshot at export time
+            </span>
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={includeWeather}
+            onClick={() => setIncludeWeather((v) => !v)}
+            className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+              includeWeather ? 'bg-sage' : 'bg-forest/20'
+            }`}
+          >
+            <span
+              className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                includeWeather ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </label>
+      )}
 
       {/* Prices toggle */}
       <label className="flex items-center justify-between mb-4 cursor-pointer">
