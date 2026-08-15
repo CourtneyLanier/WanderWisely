@@ -8,6 +8,7 @@ import {
   uploadReservationPdf,
   removeReservationPdf,
   backfillReservationPdfPaths,
+  ensureReservationPdfCached,
   MAX_PARSE_PDF_BYTES,
   MAX_RESERVATION_PDF_BYTES,
   type PdfBackfillResult,
@@ -955,6 +956,25 @@ export default function WalletPage() {
     })
     return () => { active = false }
   }, [reservations, isLoading, queryClient])
+
+  // Background prefetch: once reservations load (and we're online), download any
+  // confirmation PDF that isn't cached yet, so the whole wallet opens with no
+  // signal. Mirrors what NotesPage does for document attachments — a wallet you
+  // have to remember to sync before losing service isn't much of a wallet.
+  // Sequential so a big trip doesn't fire twenty parallel downloads.
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    const withPdfs = reservations.filter((r) => r.pdf_path)
+    if (withPdfs.length === 0) return
+    let cancelled = false
+    ;(async () => {
+      for (const r of withPdfs) {
+        if (cancelled) break
+        await ensureReservationPdfCached(r).catch(() => false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [reservations])
 
   const saveMutation = useMutation({
     mutationFn: async ({ form, rawEmail }: { form: FormState; rawEmail?: string }) => {
