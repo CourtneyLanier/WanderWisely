@@ -38,9 +38,14 @@ export default function DaysPage() {
     enabled: !!tripId,
   })
 
-  // Reservations for emoji icons on each card
+  // Reservations for emoji icons on each card.
+  // NOTE: this selects only three columns, so it must NOT share the
+  // ['reservations', tripId] key that Wallet and Overview use for full rows —
+  // React Query caches by key alone, so the truncated rows would be handed to
+  // the Wallet as if they were complete and, being fresh, would suppress its
+  // refetch. That emptied every Wallet card down to a type and a date.
   const { data: reservations = [] } = useQuery({
-    queryKey: ['reservations', tripId],
+    queryKey: ['reservations-icons-days', tripId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('reservations').select('id, type, date').eq('trip_id', tripId!)

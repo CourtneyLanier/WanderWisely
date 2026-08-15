@@ -32,7 +32,11 @@ createRoot(document.getElementById('root')!).render(
       persistOptions={{
         persister,
         maxAge: 1000 * 60 * 60 * 24 * 7,
-        buster: 'v1',
+        // Bump this to discard every persisted query cache on next load.
+        // v2: installed clients were holding truncated reservation rows written
+        // under a shared query key (see DaysPage). Renaming the key stops it
+        // recurring; this clears the copies already on people's phones.
+        buster: 'v2',
       }}
     >
       <App />
