@@ -3,8 +3,9 @@
 // tier; base URLs live in env vars so the commercial tier is a config change.
 
 import { useQuery, type QueryClient } from '@tanstack/react-query'
-import { get as idbGet, set as idbSet } from 'idb-keyval'
-import { geocode } from '@/lib/routing'
+import { geocode, normalizeLocation } from '@/lib/geocoding'
+
+export { normalizeLocation }
 
 const FORECAST_URL =
   import.meta.env.VITE_OPEN_METEO_FORECAST_URL || 'https://api.open-meteo.com/v1/forecast'
@@ -35,46 +36,7 @@ const CLIMATOLOGY_YEARS = 5
 // Archive lags ~5 days behind real time; never request anything newer than this.
 const ARCHIVE_LAG_DAYS = 7
 
-// ─── geocode cache ────────────────────────────────────────────────────────────
-// Nominatim asks for ≤1 request/second, so results are cached in idb-keyval
-// (keyed on the normalized location string) and live lookups run through a
-// throttled queue. Failures are remembered in-memory only, so a transient
-// network error doesn't poison the persistent cache.
-
-export function normalizeLocation(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/g, ' ')
-}
-
 type Coords = { lat: number; lon: number }
-
-const geocodeInflight = new Map<string, Promise<Coords | null>>()
-const geocodeFailed = new Set<string>()
-let geocodeQueue: Promise<unknown> = Promise.resolve()
-
-export async function geocodeCached(location: string): Promise<Coords | null> {
-  const key = normalizeLocation(location)
-  if (!key) return null
-
-  const cached = await idbGet<Coords>(`geocode:${key}`)
-  if (cached) return cached
-  if (geocodeFailed.has(key)) return null
-
-  const inflight = geocodeInflight.get(key)
-  if (inflight) return inflight
-
-  const run = geocodeQueue.then(() => geocode(location))
-  // Space the *next* live lookup ≥1.1s out without delaying this caller.
-  geocodeQueue = run.then(() => new Promise((r) => setTimeout(r, 1100)))
-  const promise = run.then(async (coords) => {
-    if (coords) await idbSet(`geocode:${key}`, coords)
-    else geocodeFailed.add(key)
-    geocodeInflight.delete(key)
-    return coords
-  })
-
-  geocodeInflight.set(key, promise)
-  return promise
-}
 
 // ─── Open-Meteo fetch helpers ────────────────────────────────────────────────
 
@@ -231,8 +193,11 @@ async function climatologyReading(
 
 /**
  * One reading (morning or night) for a free-text location on a date.
- * Throws on network failure so React Query can retry; resolves with null
- * fields when the location simply can't be geocoded.
+ *
+ * Throws on network failure — including a geocoder that couldn't be reached —
+ * so React Query retries with backoff instead of caching a blank forever.
+ * Resolves with null fields only when the location genuinely doesn't resolve,
+ * which the UI reports differently from an outright error.
  */
 export async function getSlotReading(
   location: string,
@@ -243,8 +208,9 @@ export async function getSlotReading(
   const window = slot === 'morning' ? AM_WINDOW : PM_WINDOW
   const emptySource: 'forecast' | 'normal' = isForecastable(dateISO) ? 'forecast' : 'normal'
 
-  const coords = await geocodeCached(location)
-  if (!coords) return { tempF: null, rainPct: null, source: emptySource }
+  const place = await geocode(location)
+  if (!place) return { tempF: null, rainPct: null, source: emptySource }
+  const coords: Coords = { lat: place.lat, lon: place.lon }
 
   if (isForecastable(dateISO)) {
     const reading = forecastReading(await fetchForecast(coords), dateISO, hour, window)

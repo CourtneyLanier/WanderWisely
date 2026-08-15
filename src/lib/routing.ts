@@ -1,21 +1,18 @@
-// Shared routing utilities — Nominatim geocoding + OSRM drive time
-// Free, no API key required.
+// Shared routing utilities — OSRM drive time on top of the shared geocoder.
+// Geocoding itself lives in src/lib/geocoding.ts (three-provider chain).
 
-export async function geocode(address: string): Promise<{ lat: number; lon: number } | null> {
-  try {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`
-    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } })
-    const data = await res.json()
-    if (!data.length) return null
-    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
-  } catch { return null }
-}
+import { geocode } from '@/lib/geocoding'
 
 export async function calcDriveTime(
   origin: string,
   destination: string
 ): Promise<{ hours: number; miles: number } | null> {
-  const [from, to] = await Promise.all([geocode(origin), geocode(destination)])
+  // Drive time is a nice-to-have on the Days and Route pages, so an
+  // unreachable geocoder degrades to "no estimate" rather than an error.
+  const [from, to] = await Promise.all([
+    geocode(origin).catch(() => null),
+    geocode(destination).catch(() => null),
+  ])
   if (!from || !to) return null
   try {
     const url = `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`
