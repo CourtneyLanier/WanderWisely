@@ -78,6 +78,8 @@ type DayInsert = {
   departure_time?: string | null
   start_location?: string | null
   end_location?: string | null
+  start_weather_location?: string | null
+  end_weather_location?: string | null
   drive_miles?: number | null
   drive_hours?: number | null
   notes?: string | null
@@ -287,6 +289,8 @@ export interface Database {
           departure_time: string | null
           start_location: string | null
           end_location: string | null
+          start_weather_location: string | null
+          end_weather_location: string | null
           drive_miles: number | null
           drive_hours: number | null
           notes: string | null
@@ -503,6 +507,8 @@ export interface Database {
           departure_time: string | null
           start_location: string | null
           end_location: string | null
+          start_weather_location: string | null
+          end_weather_location: string | null
           drive_miles: number | null
           drive_hours: number | null
           notes: string | null

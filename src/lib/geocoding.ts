@@ -342,3 +342,26 @@ export function useGeocode(location: string | null) {
     retry: 1,
   })
 }
+
+/**
+ * Resolve a batch of locations in the background so the Days list, the day
+ * pages and the export are warm before anyone asks. Cached and in-flight
+ * entries short-circuit, so calling this repeatedly is cheap.
+ *
+ * Bounded concurrency: Census and Open-Meteo have no throttle, but firing
+ * thirty lookups at once on a phone helps nobody. Errors are swallowed — this
+ * is speculative work and the real queries report failures themselves.
+ */
+export async function prewarmGeocodes(locations: (string | null)[], concurrency = 4): Promise<void> {
+  const queue = Array.from(new Set(locations.filter((l): l is string => !!l && !!l.trim())))
+  if (!queue.length) return
+
+  let next = 0
+  const worker = async () => {
+    while (next < queue.length) {
+      const loc = queue[next++]
+      await geocode(loc).catch(() => null)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker))
+}
