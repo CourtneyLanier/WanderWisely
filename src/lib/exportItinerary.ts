@@ -11,6 +11,8 @@ import { supabase } from '@/lib/supabase'
 import { getDocFileBlob } from '@/lib/docFiles'
 import { dayRoute } from '@/lib/dayTitle'
 import { getSlotReadingCached, type WeatherReading } from '@/lib/weather'
+import { geocode } from '@/lib/geocoding'
+import { sunTimes, formatInZone, formatDaylight } from '@/lib/sun'
 import type { Trip, Day, Lodging, Activity, Reservation, MealSlot, TripDocument } from '@/types'
 
 // ─── Options ─────────────────────────────────────────────────────────────────
@@ -45,6 +47,14 @@ export interface ExportDocFile {
 export interface ExportDayWeather {
   morning: WeatherReading | null
   night: WeatherReading | null
+  /**
+   * Sunrise/sunset, already formatted in the location's own timezone. Computed
+   * rather than fetched, so these survive a day whose temperature lookups
+   * failed — the slide is never completely empty.
+   */
+  sunrise: string | null
+  sunset: string | null
+  daylight: string | null
 }
 
 export interface ExportData {
@@ -209,11 +219,29 @@ async function gatherWeather(
       const from = day.start_location || (prevDay ? hotelAddr(prevDay.date) : null)
       const to = day.end_location || hotelAddr(day.date)
       if (!from || !to || !day.date) return
-      const [morning, night] = await Promise.all([
+      const [morning, night, fromGeo, toGeo] = await Promise.all([
         getSlotReadingCached(queryClient, from, day.date, 'morning'),
         getSlotReadingCached(queryClient, to, day.date, 'night'),
+        geocode(from).catch(() => null),
+        geocode(to).catch(() => null),
       ])
-      if (morning || night) weatherByDay[day.id] = { morning, night }
+
+      // Sunrise at the wake-up coordinate, sunset at the bed-down one.
+      const riseAt = fromGeo && sunTimes(fromGeo.lat, fromGeo.lon, day.date)
+      const setAt = toGeo && sunTimes(toGeo.lat, toGeo.lon, day.date)
+      const riseZone = fromGeo?.timeZone ?? morning?.timeZone ?? null
+      const setZone = toGeo?.timeZone ?? night?.timeZone ?? null
+
+      const entry: ExportDayWeather = {
+        morning,
+        night,
+        sunrise: riseAt ? formatInZone(riseAt.sunrise, riseZone) : null,
+        sunset: setAt ? formatInZone(setAt.sunset, setZone) : null,
+        // Only meaningful when both ends are the same place; a travel day's
+        // "daylight" spanning two locations would be a made-up number.
+        daylight: riseAt && setAt && from === to ? formatDaylight(riseAt.daylightMinutes) : null,
+      }
+      if (morning || night || entry.sunrise || entry.sunset) weatherByDay[day.id] = entry
     })
   )
   return weatherByDay
@@ -438,16 +466,27 @@ function weatherLine(data: ExportData, day: Day): string {
     return `${icon} ${label} ${Math.round(r.tempF)}°${rain}`
   }
   const parts = [slot('☀️', '7 AM', w.morning), slot('🌙', '9 PM', w.night)].filter(Boolean)
-  if (!parts.length) return ''
+
+  const sun = [
+    w.sunrise ? `🌅 ${w.sunrise}` : '',
+    w.sunset ? `🌇 ${w.sunset}` : '',
+    w.daylight ? `${w.daylight} of daylight` : '',
+  ].filter(Boolean)
+
+  if (!parts.length && !sun.length) return ''
 
   const anyNormal = w.morning?.source === 'normal' || w.night?.source === 'normal'
   const note = anyNormal
     ? 'typical for this date'
     : data.weatherAsOf ? `forecast as of ${data.weatherAsOf}` : ''
 
-  return `<p class="weather-meta${anyNormal ? ' weather-normal' : ''}">${esc(parts.join(' — '))}${
-    note ? `<span class="weather-note">${esc(note)}</span>` : ''
-  }</p>`
+  // A day whose readings failed still gets a line, so the layout stays
+  // consistent and the gap is visible rather than silently absent.
+  const temps = parts.length ? esc(parts.join(' — ')) : '<span class="weather-none">Weather unavailable</span>'
+
+  return `<p class="weather-meta${anyNormal ? ' weather-normal' : ''}">${temps}${
+    sun.length ? `<span class="weather-sun">${esc(sun.join(' · '))}</span>` : ''
+  }${note && parts.length ? `<span class="weather-note">${esc(note)}</span>` : ''}</p>`
 }
 
 function daySlide(data: ExportData, day: Day, opts: ExportOptions): string {
@@ -672,6 +711,7 @@ ${p} .route{font-size:22px}
 ${p} .drive-meta{font-size:11px;margin-top:3px}
 ${p} .weather-meta{font-size:11px;margin-top:3px}
 ${p} .weather-note{font-size:10px}
+${p} .weather-sun{font-size:10px;margin-top:1px}
 ${p} .block{padding:9px 12px;margin-top:9px;border-radius:10px;box-shadow:none}
 ${p} .block-label{margin-bottom:5px}
 ${p} .block-title{font-size:14px}
@@ -743,6 +783,9 @@ a{color:var(--deep-teal);text-decoration:none}
 .weather-meta{color:rgba(45,61,30,.65);font-size:13px;margin-top:6px}
 .weather-meta.weather-normal{color:rgba(45,61,30,.45)}
 .weather-note{font-size:11px;font-style:italic;color:rgba(45,61,30,.4);margin-left:8px}
+/* Sun times sit on their own line so a long day never reflows the meta row. */
+.weather-sun{display:block;font-size:12px;color:rgba(45,61,30,.5);margin-top:2px}
+.weather-none{font-style:italic;color:rgba(45,61,30,.4)}
 .muted{color:rgba(45,61,30,.4);font-style:italic}
 /* Blocks */
 .block{background:var(--white-warm);border:1px solid rgba(45,61,30,.11);border-radius:14px;

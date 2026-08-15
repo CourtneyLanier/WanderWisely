@@ -21,6 +21,7 @@
 // weather purposes a 20-mile miss is irrelevant, so coarsening costs nothing
 // and removes almost all of the blanks.
 
+import { useQuery } from '@tanstack/react-query'
 import { get as idbGet, set as idbSet } from 'idb-keyval'
 import { supabase } from '@/lib/supabase'
 import { ALL_STATES } from '@/lib/usStates'
@@ -324,4 +325,20 @@ export async function geocode(location: string): Promise<GeoResult | null> {
 
   inflight.set(key, run)
   return run
+}
+
+/**
+ * Coordinates for a location, as a query so components can use them without
+ * threading the async call through. Deliberately separate from the weather
+ * query: sunrise/sunset is pure math and should still render when Open-Meteo
+ * is unreachable, as long as we know where the place is.
+ */
+export function useGeocode(location: string | null) {
+  return useQuery({
+    queryKey: ['geocode', location ? normalizeLocation(location) : ''],
+    queryFn: () => geocode(location!),
+    enabled: !!location,
+    staleTime: Infinity, // a place does not move
+    retry: 1,
+  })
 }

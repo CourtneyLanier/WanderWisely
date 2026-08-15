@@ -5,6 +5,8 @@
 // show with no signal (Glacier, Yellowstone).
 
 import { useDayWeather, type WeatherReading } from '@/lib/weather'
+import { useGeocode, type GeoResult } from '@/lib/geocoding'
+import { sunTimes, formatInZone } from '@/lib/sun'
 import type { UseQueryResult } from '@tanstack/react-query'
 
 function shortPlace(location: string): string {
@@ -38,11 +40,15 @@ function WeatherSlot({
   time,
   location,
   query,
+  sun,
 }: {
   title: string
   time: string
   location: string
   query: UseQueryResult<WeatherReading>
+  /** Sunrise or sunset for this slot's location — computed, so it can show
+   *  even when the temperature lookup failed. */
+  sun: { icon: string; label: string } | null
 }) {
   const reading = query.data
   const isNormal = reading?.source === 'normal'
@@ -89,8 +95,37 @@ function WeatherSlot({
           )}
         </>
       )}
+
+      {/* Outside the branches above on purpose: sunrise/sunset is pure
+          astronomy, so it still renders when the forecast call failed. */}
+      {sun && (
+        <p className="text-[11px] text-forest/45 mt-1.5">
+          {sun.icon} {sun.label}
+        </p>
+      )}
     </div>
   )
+}
+
+/**
+ * Sunrise at the wake-up coordinate, sunset at the bed-down one — consistent
+ * with the existing morning/night split. Returns null inside the polar circles
+ * on days that genuinely have neither.
+ */
+function sunLabel(
+  geo: GeoResult | null | undefined,
+  reading: WeatherReading | undefined,
+  date: string | null,
+  which: 'sunrise' | 'sunset'
+): { icon: string; label: string } | null {
+  if (!geo || !date) return null
+  const t = sunTimes(geo.lat, geo.lon, date)
+  if (!t) return null
+  const zone = geo.timeZone ?? reading?.timeZone ?? null
+  return {
+    icon: which === 'sunrise' ? '🌅' : '🌇',
+    label: formatInZone(which === 'sunrise' ? t.sunrise : t.sunset, zone),
+  }
 }
 
 // ─── card ────────────────────────────────────────────────────────────────────
@@ -107,6 +142,16 @@ export default function DayWeatherCard({
   variant?: 'full' | 'compact'
 }) {
   const { morning, night } = useDayWeather(from, to, date)
+
+  // Coordinates come from their own query rather than the weather reading, so
+  // sunrise/sunset survives an Open-Meteo outage. The zone prefers the
+  // geocoder's, falling back to the one the forecast response carries — Census
+  // and Nominatim don't return a timezone, and street addresses resolve there.
+  const fromGeo = useGeocode(from)
+  const toGeo = useGeocode(to)
+
+  const sunrise = sunLabel(fromGeo.data, morning.data, date, 'sunrise')
+  const sunset = sunLabel(toGeo.data, night.data, date, 'sunset')
 
   if (!from || !to || !date) return null
 
@@ -140,9 +185,9 @@ export default function DayWeatherCard({
           </p>
         ) : (
           <div className="flex gap-4">
-            <WeatherSlot title="Wake up" time="7 AM" location={from} query={morning} />
+            <WeatherSlot title="Wake up" time="7 AM" location={from} query={morning} sun={sunrise} />
             <div className="w-px bg-forest/10 self-stretch" />
-            <WeatherSlot title="Bed down" time="9 PM" location={to} query={night} />
+            <WeatherSlot title="Bed down" time="9 PM" location={to} query={night} sun={sunset} />
           </div>
         )}
       </div>

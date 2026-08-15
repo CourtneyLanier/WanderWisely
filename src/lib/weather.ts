@@ -17,6 +17,14 @@ export interface WeatherReading {
   tempF: number | null
   rainPct: number | null
   source: 'forecast' | 'normal'
+  /**
+   * IANA zone for the location, e.g. "America/Denver". Open-Meteo returns it
+   * because we ask for timezone=auto; sunrise/sunset needs it to show
+   * park-local times. Null when the reading came back empty. Providers other
+   * than Open-Meteo's geocoder don't supply one, so this is often the only
+   * source of a zone for a street address.
+   */
+  timeZone: string | null
 }
 
 export interface DayWeather {
@@ -47,11 +55,17 @@ interface HourlyData {
   precipitation?: (number | null)[]
 }
 
+/** Hourly series plus the location's IANA zone, which timezone=auto returns. */
+interface HourlySeries {
+  hourly: HourlyData
+  timeZone: string | null
+}
+
 // Dedupe concurrent identical requests (e.g. a rest day fetching the same
 // coordinate for both morning and night).
-const fetchInflight = new Map<string, Promise<HourlyData>>()
+const fetchInflight = new Map<string, Promise<HourlySeries>>()
 
-async function fetchHourly(url: string): Promise<HourlyData> {
+async function fetchHourly(url: string): Promise<HourlySeries> {
   const existing = fetchInflight.get(url)
   if (existing) return existing
   const promise = (async () => {
@@ -60,7 +74,7 @@ async function fetchHourly(url: string): Promise<HourlyData> {
       if (!res.ok) throw new Error(`Open-Meteo ${res.status}`)
       const data = await res.json()
       if (!data.hourly?.time) throw new Error('Open-Meteo: no hourly data')
-      return data.hourly as HourlyData
+      return { hourly: data.hourly as HourlyData, timeZone: (data.timezone as string) ?? null }
     } finally {
       fetchInflight.delete(url)
     }
@@ -73,7 +87,7 @@ function withKey(url: string): string {
   return API_KEY ? `${url}&apikey=${API_KEY}` : url
 }
 
-function fetchForecast(coords: Coords): Promise<HourlyData> {
+function fetchForecast(coords: Coords): Promise<HourlySeries> {
   const url =
     `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}` +
     `&hourly=temperature_2m,precipitation_probability&temperature_unit=fahrenheit` +
@@ -81,7 +95,7 @@ function fetchForecast(coords: Coords): Promise<HourlyData> {
   return fetchHourly(withKey(url))
 }
 
-function fetchArchiveWindow(coords: Coords, startISO: string, endISO: string): Promise<HourlyData> {
+function fetchArchiveWindow(coords: Coords, startISO: string, endISO: string): Promise<HourlySeries> {
   const url =
     `${ARCHIVE_URL}?latitude=${coords.lat}&longitude=${coords.lon}` +
     `&start_date=${startISO}&end_date=${endISO}` +
@@ -123,7 +137,8 @@ function hourIndex(hourly: HourlyData, dateISO: string, hour: number): number | 
 
 // ─── readings ────────────────────────────────────────────────────────────────
 
-function forecastReading(hourly: HourlyData, dateISO: string, hour: number, window: number[]): WeatherReading | null {
+function forecastReading(series: HourlySeries, dateISO: string, hour: number, window: number[]): WeatherReading | null {
+  const { hourly } = series
   const i = hourIndex(hourly, dateISO, hour)
   if (i === null) return null
   let rain: number | null = null
@@ -132,7 +147,7 @@ function forecastReading(hourly: HourlyData, dateISO: string, hour: number, wind
     const p = j === null ? null : hourly.precipitation_probability?.[j] ?? null
     if (p !== null) rain = Math.max(rain ?? 0, p)
   }
-  return { tempF: hourly.temperature_2m[i], rainPct: rain, source: 'forecast' }
+  return { tempF: hourly.temperature_2m[i], rainPct: rain, source: 'forecast', timeZone: series.timeZone }
 }
 
 // Historical normal: sample the target calendar date ±2 days across the last
@@ -156,19 +171,20 @@ async function climatologyReading(
   const runs = await Promise.all(
     years.map(async (y) => ({
       year: y,
-      hourly: await fetchArchiveWindow(
+      series: await fetchArchiveWindow(
         coords,
         shiftISO(`${y}${monthDay}`, -2),
         shiftISO(`${y}${monthDay}`, 2)
       ).catch(() => null),
     }))
   )
-  const ok = runs.filter((r): r is { year: number; hourly: HourlyData } => r.hourly !== null)
+  const ok = runs.filter((r): r is { year: number; series: HourlySeries } => r.series !== null)
   if (!ok.length) throw new Error('Historical weather unavailable')
 
   const temps: number[] = []
   const wet: number[] = []
-  ok.forEach(({ year, hourly }) => {
+  ok.forEach(({ year, series }) => {
+    const { hourly } = series
     for (let off = -2; off <= 2; off++) {
       const sampleISO = shiftISO(`${year}${monthDay}`, off)
       const i = hourIndex(hourly, sampleISO, hour)
@@ -188,6 +204,7 @@ async function climatologyReading(
     tempF: temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null,
     rainPct: wet.length ? (wet.reduce((a, b) => a + b, 0) / wet.length) * 100 : null,
     source: 'normal',
+    timeZone: ok[0].series.timeZone,
   }
 }
 
@@ -209,7 +226,7 @@ export async function getSlotReading(
   const emptySource: 'forecast' | 'normal' = isForecastable(dateISO) ? 'forecast' : 'normal'
 
   const place = await geocode(location)
-  if (!place) return { tempF: null, rainPct: null, source: emptySource }
+  if (!place) return { tempF: null, rainPct: null, source: emptySource, timeZone: null }
   const coords: Coords = { lat: place.lat, lon: place.lon }
 
   if (isForecastable(dateISO)) {
