@@ -14,8 +14,9 @@ import {
   ACCEPTED_DOC_MIME,
   MAX_DOC_FILE_BYTES,
 } from '@/lib/docFiles'
-import { hasCachedDocFile } from '@/lib/docFileCache'
-import DocFileViewer from '@/components/docs/DocFileViewer'
+import { docFileRef } from '@/lib/docFiles'
+import { hasCachedFile } from '@/lib/fileCache'
+import FileViewer from '@/components/files/FileViewer'
 import type { TripNote, TripDocument, DocType } from '@/types'
 
 // Validate a picked file the same way the uploader does, for early feedback.
@@ -195,7 +196,7 @@ function DocCard({
   useEffect(() => {
     let active = true
     if (doc.file_path) {
-      hasCachedDocFile(doc.id).then((v) => { if (active) setOfflineReady(v) })
+      hasCachedFile(doc.id).then((v) => { if (active) setOfflineReady(v) })
     } else {
       setOfflineReady(null)
     }
@@ -481,9 +482,9 @@ function DocCard({
         </div>
       )}
 
-      {viewing && (
-        <DocFileViewer
-          doc={doc}
+      {viewing && docFileRef(doc) && (
+        <FileViewer
+          file={docFileRef(doc)!}
           onClose={() => setViewing(false)}
           onCached={() => setOfflineReady(true)}
         />

@@ -1,8 +1,18 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQueryClient, useQuery, useMutation, type QueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
+import {
+  reservationPdfRef,
+  uploadReservationPdf,
+  removeReservationPdf,
+  backfillReservationPdfPaths,
+  MAX_PARSE_PDF_BYTES,
+  MAX_RESERVATION_PDF_BYTES,
+  type PdfBackfillResult,
+} from '@/lib/reservationPdfs'
+import FileViewer from '@/components/files/FileViewer'
 import type { Reservation, ReservationType, Json } from '@/types'
 
 // ── constants ──────────────────────────────────────────────────────────────────
@@ -140,6 +150,8 @@ async function deleteReservationWithCleanup(res: Reservation, tripId: string) {
   }
   const { error } = await supabase.from('reservations').delete().eq('id', res.id)
   if (error) throw error
+  // Best-effort: don't leave the confirmation PDF orphaned in Storage.
+  await removeReservationPdf(res)
 }
 
 // ── ReservationCard ────────────────────────────────────────────────────────────
@@ -150,11 +162,46 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
   const [editing, setEditing] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  const [viewingPdf, setViewingPdf] = useState(false)
+  const [attachErr, setAttachErr] = useState('')
+  const attachRef = useRef<HTMLInputElement>(null)
+  const pdfRef = reservationPdfRef(res)
+
   function copyConf() {
     if (!res.confirmation_number) return
     navigator.clipboard.writeText(res.confirmation_number)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  // Attach (or replace) a confirmation PDF on an existing reservation. Before
+  // this, only the batch-upload flow could ever set one, so anything typed in
+  // or pasted from an email was stuck without a PDF permanently.
+  const attachMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (res.pdf_path) await removeReservationPdf(res)
+      const path = await uploadReservationPdf(file, res.id)
+      const { error } = await supabase
+        .from('reservations')
+        .update({ pdf_path: path })
+        .eq('id', res.id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      setAttachErr('')
+      invalidateReservationViews(queryClient)
+    },
+    onError: (e) => setAttachErr((e as Error).message),
+  })
+
+  function pickPdf(file: File | undefined) {
+    if (!file) return
+    if (file.type !== 'application/pdf') return setAttachErr('Please choose a PDF.')
+    if (file.size > MAX_RESERVATION_PDF_BYTES) {
+      return setAttachErr(`${(file.size / 1024 / 1024).toFixed(1)} MB — over the 10 MB limit.`)
+    }
+    setAttachErr('')
+    attachMutation.mutate(file)
   }
 
   const editMutation = useMutation({
@@ -238,12 +285,12 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
               {!copied && <span className="text-deep-teal/50">⎘</span>}
             </button>
           )}
-          {res.pdf_url && (
-            <a href={res.pdf_url} target="_blank" rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+          {pdfRef && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setViewingPdf(true) }}
               className="mt-1.5 inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest transition-colors">
               📄 View PDF
-            </a>
+            </button>
           )}
           {res.listing_url && (
             <a href={res.listing_url} target="_blank" rel="noopener noreferrer"
@@ -300,17 +347,46 @@ function ReservationCard({ res, onDelete }: { res: Reservation; onDelete: () => 
               </div>
             </div>
           )}
-          {res.pdf_url && (
-            <a href={res.pdf_url} target="_blank" rel="noopener noreferrer"
-              className="text-xs text-deep-teal underline">
+          {pdfRef && (
+            <button
+              onClick={() => setViewingPdf(true)}
+              className="block text-xs text-deep-teal underline">
               📄 View confirmation PDF
-            </a>
+            </button>
           )}
+
+          {/* Attach works on every reservation, however it was created. */}
+          <div>
+            <input
+              ref={attachRef}
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={(e) => {
+                pickPdf(e.target.files?.[0])
+                e.target.value = '' // let the same file be picked again after an error
+              }}
+            />
+            <button
+              onClick={() => attachRef.current?.click()}
+              disabled={attachMutation.isPending}
+              className="text-xs text-sage hover:text-forest disabled:opacity-50 transition-colors">
+              {attachMutation.isPending
+                ? 'Uploading…'
+                : res.pdf_path ? '📎 Replace PDF' : '📎 Attach PDF'}
+            </button>
+            {attachErr && <p className="text-xs text-terracotta mt-1">{attachErr}</p>}
+          </div>
+
           <button onClick={onDelete}
             className="text-xs text-terracotta hover:text-forest transition-colors pt-1">
             Delete reservation
           </button>
         </div>
+      )}
+
+      {viewingPdf && pdfRef && (
+        <FileViewer file={pdfRef} onClose={() => setViewingPdf(false)} />
       )}
     </div>
   )
@@ -540,7 +616,8 @@ type Resolution = 'replace' | 'keep-both' | 'discard'
 interface Draft {
   key: string
   fileName: string
-  pdfUrl: string
+  /** Path in the private reservation-pdfs bucket — never a public URL. */
+  pdfPath: string
   form: FormState
 }
 
@@ -548,11 +625,9 @@ interface Draft {
 // existing reservation first (the user chose "Replace existing").
 export interface ResolvedDraft {
   form: FormState
-  pdfUrl: string
+  pdfPath: string
   replaceId: string | null
 }
-
-const MAX_PDF_BYTES = 5 * 1024 * 1024
 
 function UploadPdfFlow({
   existing,
@@ -597,20 +672,15 @@ function UploadPdfFlow({
       const file = files[i]
       setProgress({ done: i, total: files.length, name: file.name })
       try {
-        if (file.size > MAX_PDF_BYTES) {
+        if (file.size > MAX_PARSE_PDF_BYTES) {
           throw new Error(`${(file.size / 1024 / 1024).toFixed(1)} MB — over the 5 MB limit`)
         }
         const base64 = await readBase64(file)
 
-        // Upload to Supabase Storage (i in the path keeps same-named files distinct).
-        const path = `${user.id}/${Date.now()}_${i}_${file.name}`
-        const { error: uploadError } = await supabase.storage
-          .from('reservation-pdfs')
-          .upload(path, file, { contentType: 'application/pdf' })
-        if (uploadError) throw uploadError
-        const { data: { publicUrl } } = supabase.storage
-          .from('reservation-pdfs')
-          .getPublicUrl(path)
+        // Upload to the PRIVATE reservation-pdfs bucket and keep the path. The
+        // row doesn't exist yet, so there's no id to key the local cache on —
+        // the trip-load prefetch caches it for offline use shortly after.
+        const path = await uploadReservationPdf(file)
 
         // Parse with Claude via the edge function.
         const { data, error: fnError } = await supabase.functions.invoke('parse-with-claude', {
@@ -622,7 +692,7 @@ function UploadPdfFlow({
         collected.push({
           key: `${Date.now()}_${i}`,
           fileName: file.name,
-          pdfUrl: publicUrl,
+          pdfPath: path,
           form: jsonToForm(extractJson(data.text as string)),
         })
       } catch (e) {
@@ -654,7 +724,7 @@ function UploadPdfFlow({
       if (conflict && r === 'discard') continue
       resolved.push({
         form: d.form,
-        pdfUrl: d.pdfUrl,
+        pdfPath: d.pdfPath,
         replaceId: conflict && r === 'replace' ? conflict.id : null,
       })
     }
@@ -867,12 +937,30 @@ export default function WalletPage() {
     enabled: !!tripId,
   })
 
+  // One-time repair for rows created before migration 013, which stored a public
+  // URL instead of a storage path. Each derived path is verified against Storage
+  // before it's committed — a wrong path looks like a working button until it's
+  // tapped. Runs once per mount; unresolved rows are surfaced below.
+  const [pdfRepair, setPdfRepair] = useState<PdfBackfillResult | null>(null)
+  const repairRan = useRef(false)
+  useEffect(() => {
+    if (isLoading || repairRan.current) return
+    if (!reservations.some((r) => !r.pdf_path && r.pdf_url)) return
+    repairRan.current = true
+    let active = true
+    backfillReservationPdfPaths(reservations).then((result) => {
+      if (!active) return
+      setPdfRepair(result)
+      if (result.migrated > 0) invalidateReservationViews(queryClient)
+    })
+    return () => { active = false }
+  }, [reservations, isLoading, queryClient])
+
   const saveMutation = useMutation({
-    mutationFn: async ({ form, rawEmail, pdfUrl }: { form: FormState; rawEmail?: string; pdfUrl?: string }) => {
+    mutationFn: async ({ form, rawEmail }: { form: FormState; rawEmail?: string }) => {
       const { error } = await supabase.from('reservations').insert({
         ...reservationRow(form, tripId!),
         raw_email_text: rawEmail ?? null,
-        pdf_url: pdfUrl ?? null,
       })
       if (error) throw error
     },
@@ -895,7 +983,7 @@ export default function WalletPage() {
         }
         const { error } = await supabase.from('reservations').insert({
           ...reservationRow(d.form, tripId!),
-          pdf_url: d.pdfUrl,
+          pdf_path: d.pdfPath,
         })
         if (error) throw error
       }
@@ -911,8 +999,8 @@ export default function WalletPage() {
     onSuccess: () => invalidateReservationViews(queryClient),
   })
 
-  function handleSave(form: FormState, rawEmail?: string, pdfUrl?: string) {
-    saveMutation.mutate({ form, rawEmail, pdfUrl })
+  function handleSave(form: FormState, rawEmail?: string) {
+    saveMutation.mutate({ form, rawEmail })
   }
 
   // ── not set up ──
@@ -1043,6 +1131,17 @@ export default function WalletPage() {
           + Add
         </button>
       </div>
+
+      {pdfRepair && pdfRepair.unresolved.length > 0 && (
+        <div className="bg-gold/10 border border-gold/30 rounded-lg px-3 py-2.5 mb-3">
+          <p className="text-xs text-forest">
+            Couldn't find the stored PDF for{' '}
+            {pdfRepair.unresolved.map((u) => u.label).join(', ')}. Use{' '}
+            <span className="font-medium">Attach PDF</span> on{' '}
+            {pdfRepair.unresolved.length === 1 ? 'that reservation' : 'those reservations'} to add it again.
+          </p>
+        </div>
+      )}
 
       {isLoading && (
         <p className="text-forest/40 text-sm text-center py-20">Loading…</p>

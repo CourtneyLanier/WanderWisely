@@ -89,7 +89,8 @@ export interface Reservation {
   details: Json | null
   raw_email_text: string | null // owner-only
   cost: number | null           // owner-only
-  pdf_url: string | null        // owner-only
+  pdf_url: string | null        // owner-only: DEPRECATED legacy public URL, backfill source only (migration 013)
+  pdf_path: string | null       // owner-only: path in the private reservation-pdfs bucket (migration 013)
   listing_url: string | null    // owner-only: link to Airbnb/hotel listing
   paid?: boolean                // owner-only: marks whether this reservation has been paid (migration 003)
 }
