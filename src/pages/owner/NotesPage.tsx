@@ -17,6 +17,7 @@ import {
 import { docFileRef } from '@/lib/docFiles'
 import { hasCachedFile } from '@/lib/fileCache'
 import FileViewer from '@/components/files/FileViewer'
+import Linkified from '@/components/Linkified'
 import type { TripNote, TripDocument, DocType } from '@/types'
 
 // Validate a picked file the same way the uploader does, for early feedback.
@@ -148,7 +149,7 @@ function NoteCard({
       {expanded && (
         <div className="mt-3 pt-3 border-t border-forest/10">
           {note.content ? (
-            <p className="text-sm text-forest whitespace-pre-wrap leading-relaxed">{note.content}</p>
+            <p className="text-sm text-forest whitespace-pre-wrap leading-relaxed"><Linkified text={note.content} /></p>
           ) : (
             <p className="text-sm text-forest/30 italic">No content yet.</p>
           )}
@@ -425,7 +426,7 @@ function DocCard({
       {expanded && (
         <div className="mt-3 pt-3 border-t border-forest/10 space-y-3">
           {doc.content ? (
-            <p className="text-sm text-forest whitespace-pre-wrap leading-relaxed">{doc.content}</p>
+            <p className="text-sm text-forest whitespace-pre-wrap leading-relaxed"><Linkified text={doc.content} /></p>
           ) : (
             <p className="text-sm text-forest/30 italic">No content yet.</p>
           )}
