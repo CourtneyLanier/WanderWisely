@@ -46,6 +46,41 @@ const ARCHIVE_LAG_DAYS = 7
 
 type Coords = { lat: number; lon: number }
 
+// ─── which place to ask about ────────────────────────────────────────────────
+
+/** The day fields weatherLocations needs — kept structural so guest pages,
+ *  which fetch a narrower row shape, can pass what they have. */
+export interface WeatherDay {
+  date: string | null
+  start_location: string | null
+  end_location: string | null
+  start_weather_location?: string | null
+  end_weather_location?: string | null
+}
+
+/**
+ * Where to look up each end of a day's weather, in priority order:
+ *   1. the manual override (migration 014) — the escape hatch for anywhere the
+ *      geocoder chain still can't find
+ *   2. the day's own start/end location
+ *   3. the relevant hotel address from the wallet
+ *
+ * Morning uses where you woke up, so it falls back to the PREVIOUS night's
+ * hotel; night uses that night's. Shared by the owner day page, the guest day
+ * list and the itinerary export, which otherwise drifted apart.
+ */
+export function weatherLocations(
+  day: WeatherDay,
+  prevDay: { date: string | null } | null,
+  hotelByDate: Record<string, string | null | undefined>
+): { from: string | null; to: string | null } {
+  const hotel = (d: string | null | undefined) => (d ? hotelByDate[d] ?? null : null)
+  return {
+    from: day.start_weather_location || day.start_location || hotel(prevDay?.date) || null,
+    to: day.end_weather_location || day.end_location || hotel(day.date) || null,
+  }
+}
+
 // ─── Open-Meteo fetch helpers ────────────────────────────────────────────────
 
 interface HourlyData {
@@ -287,6 +322,10 @@ export function useSlotReading(location: string | null, dateISO: string | null, 
     queryFn: () => getSlotReading(location!, dateISO!, slot),
     enabled,
     staleTime: enabled && isForecastable(dateISO!) ? FORECAST_STALE_MS : Infinity,
+    // Geocode and forecast failures now throw rather than resolving empty, so
+    // retries actually fire. Backoff keeps a flaky connection from hammering.
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   })
 }
 

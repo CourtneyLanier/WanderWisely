@@ -1,8 +1,10 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { calcDriveTime } from '@/lib/routing'
+import { prewarmGeocodes } from '@/lib/geocoding'
+import { weatherLocations } from '@/lib/weather'
 import { dayTitle } from '@/lib/dayTitle'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
@@ -74,6 +76,20 @@ export default function DaysPage() {
     }
     return map
   }, [hotelRes])
+
+  // Prewarm the geocoder for the whole trip as soon as the day list is known,
+  // so opening a day (or running an export) doesn't wait on a cold lookup.
+  // Cached entries short-circuit, so this is a no-op on every visit after the
+  // first. Deliberately fire-and-forget — nothing on screen depends on it.
+  useEffect(() => {
+    if (!days.length) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    const locations = days.flatMap((day, i) => {
+      const { from, to } = weatherLocations(day, i > 0 ? days[i - 1] : null, hotelByDate)
+      return [from, to]
+    })
+    void prewarmGeocodes(locations)
+  }, [days, hotelByDate])
 
   // Lodging listing URLs — for showing links on each card
   const { data: lodgingData = [] } = useQuery({
@@ -278,6 +294,7 @@ export default function DaysPage() {
         <div className="space-y-3">
           {days.map((day, i) => {
             const dayRes = reservations.filter((r) => r.date === day.date)
+
 
             // Effective route — use hotel address fallback if day locations not set (same as RoutePage)
             const prevDay = i > 0 ? days[i - 1] : null

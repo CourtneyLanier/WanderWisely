@@ -6,6 +6,7 @@ import { dayTitle } from '@/lib/dayTitle'
 import { useAppStore } from '@/store/useAppStore'
 import SuggestStopsSection from '@/components/days/SuggestStopsSection'
 import DayWeatherCard from '@/components/days/DayWeatherCard'
+import { weatherLocations } from '@/lib/weather'
 import FileViewer from '@/components/files/FileViewer'
 import { reservationPdfRef, MAX_PARSE_PDF_BYTES } from '@/lib/reservationPdfs'
 import type { StoredFileRef } from '@/lib/storedFiles'
@@ -22,12 +23,27 @@ function fmt(dateStr: string | null) {
 
 // ─── Day header edit form ─────────────────────────────────────────────────────
 
-function DayHeader({ day }: { day: Day }) {
+function DayHeader({
+  day,
+  editing,
+  setEditing,
+  weatherLocOpen,
+  setWeatherLocOpen,
+}: {
+  day: Day
+  // Editing is lifted so the weather card's "Set a weather location" prompt can
+  // open this form straight to the field that fixes the problem.
+  editing: boolean
+  setEditing: (v: boolean) => void
+  weatherLocOpen: boolean
+  setWeatherLocOpen: (v: boolean) => void
+}) {
   const queryClient = useQueryClient()
   const tripId = useAppStore((s) => s.tripId)
-  const [editing, setEditing] = useState(false)
   const [startLoc, setStartLoc] = useState(day.start_location ?? '')
   const [endLoc, setEndLoc] = useState(day.end_location ?? '')
+  const [startWeatherLoc, setStartWeatherLoc] = useState(day.start_weather_location ?? '')
+  const [endWeatherLoc, setEndWeatherLoc] = useState(day.end_weather_location ?? '')
   const [miles, setMiles] = useState(String(day.drive_miles ?? ''))
   const [hours, setHours] = useState(String(day.drive_hours ?? ''))
   const [notes, setNotes] = useState(day.notes ?? '')
@@ -105,6 +121,8 @@ function DayHeader({ day }: { day: Day }) {
   useEffect(() => {
     setStartLoc(day.start_location ?? '')
     setEndLoc(day.end_location ?? '')
+    setStartWeatherLoc(day.start_weather_location ?? '')
+    setEndWeatherLoc(day.end_weather_location ?? '')
     setMiles(String(day.drive_miles ?? ''))
     setHours(String(day.drive_hours ?? ''))
     setNotes(day.notes ?? '')
@@ -121,6 +139,8 @@ function DayHeader({ day }: { day: Day }) {
           departure_time: departureTime || null,
           start_location: startLoc || null,
           end_location: endLoc || null,
+          start_weather_location: startWeatherLoc || null,
+          end_weather_location: endWeatherLoc || null,
           drive_miles: miles ? parseInt(miles) : null,
           drive_hours: hours ? parseFloat(hours) : null,
           notes: notes || null,
@@ -172,7 +192,7 @@ function DayHeader({ day }: { day: Day }) {
             </button>
           )}
           <button
-            onClick={() => setEditing((v) => !v)}
+            onClick={() => setEditing(!editing)}
             className="text-xs text-sage hover:text-forest transition-colors"
           >
             {editing ? 'Cancel' : 'Edit'}
@@ -203,6 +223,40 @@ function DayHeader({ day }: { day: Day }) {
               <input type="text" value={endLoc} onChange={(e) => setEndLoc(e.target.value)}
                 placeholder="Ending city" className="input" />
             </div>
+          </div>
+
+          {/* Weather-location override — kept out of the way. Opens itself when
+              an override is already set, or when the weather card sent you here
+              because it couldn't find the place. */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setWeatherLocOpen(!weatherLocOpen)}
+              className="text-xs text-forest/50 hover:text-forest transition-colors"
+            >
+              {weatherLocOpen ? '▾' : '▸'} Weather location
+            </button>
+            {weatherLocOpen && (
+              <div className="mt-2 space-y-2">
+                <p className="text-xs text-forest/50">
+                  Only needed when a From/To can't be found on the map — use a nearby town.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-forest/60 mb-1">Morning weather</label>
+                    <input type="text" value={startWeatherLoc}
+                      onChange={(e) => setStartWeatherLoc(e.target.value)}
+                      placeholder="Yosemite Valley, CA" className="input" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-forest/60 mb-1">Night weather</label>
+                    <input type="text" value={endWeatherLoc}
+                      onChange={(e) => setEndWeatherLoc(e.target.value)}
+                      placeholder="Yosemite Valley, CA" className="input" />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1164,6 +1218,11 @@ export default function DayDetailPage() {
   const tripId = useAppStore((s) => s.tripId)
   const navigate = useNavigate()
 
+  // Held here rather than inside DayHeader so the weather card can open the
+  // editor straight to the weather-location field when a lookup fails.
+  const [editingDay, setEditingDay] = useState(false)
+  const [weatherLocOpen, setWeatherLocOpen] = useState(false)
+
   const { data: day, isLoading } = useQuery({
     queryKey: ['day', dayId],
     queryFn: async (): Promise<Day | null> => {
@@ -1239,10 +1298,7 @@ export default function DayDetailPage() {
   const sortedDays = [...allDays].sort((a, b) => a.day_number - b.day_number)
   const dayIndex = sortedDays.findIndex((d) => d.id === day.id)
   const prevDay = dayIndex > 0 ? sortedDays[dayIndex - 1] : null
-  const weatherFrom = day.start_location
-    || (prevDay?.date ? hotelByDate[prevDay.date] ?? null : null)
-  const weatherTo = day.end_location
-    || (day.date ? hotelByDate[day.date] ?? null : null)
+  const { from: weatherFrom, to: weatherTo } = weatherLocations(day, prevDay, hotelByDate)
 
   return (
     <div className="p-4 pt-4 pb-10">
@@ -1261,8 +1317,19 @@ export default function DayDetailPage() {
         </button>
       </div>
 
-      <DayHeader day={day} />
-      <DayWeatherCard from={weatherFrom} to={weatherTo} date={day.date} />
+      <DayHeader
+        day={day}
+        editing={editingDay}
+        setEditing={setEditingDay}
+        weatherLocOpen={weatherLocOpen || !!day.start_weather_location || !!day.end_weather_location}
+        setWeatherLocOpen={setWeatherLocOpen}
+      />
+      <DayWeatherCard
+        from={weatherFrom}
+        to={weatherTo}
+        date={day.date}
+        onFixLocation={() => { setEditingDay(true); setWeatherLocOpen(true) }}
+      />
       <LodgingSection dayId={day.id} tripId={tripId} date={day.date} />
       <ActivitiesSection dayId={day.id} />
       {day.start_location && day.end_location && day.start_location !== day.end_location && (

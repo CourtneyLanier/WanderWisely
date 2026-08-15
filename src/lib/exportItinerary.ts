@@ -10,7 +10,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { getDocFileBlob } from '@/lib/docFiles'
 import { dayRoute } from '@/lib/dayTitle'
-import { getSlotReadingCached, type WeatherReading } from '@/lib/weather'
+import { getSlotReadingCached, weatherLocations, type WeatherReading } from '@/lib/weather'
 import { geocode } from '@/lib/geocoding'
 import { sunTimes, formatInZone, formatDaylight } from '@/lib/sun'
 import type { Trip, Day, Lodging, Activity, Reservation, MealSlot, TripDocument } from '@/types'
@@ -216,8 +216,10 @@ async function gatherWeather(
   await Promise.all(
     days.map(async (day, i) => {
       const prevDay = i > 0 ? days[i - 1] : null
-      const from = day.start_location || (prevDay ? hotelAddr(prevDay.date) : null)
-      const to = day.end_location || hotelAddr(day.date)
+      const hotelByDate: Record<string, string | null> = {}
+      if (prevDay?.date) hotelByDate[prevDay.date] = hotelAddr(prevDay.date)
+      if (day.date) hotelByDate[day.date] = hotelAddr(day.date)
+      const { from, to } = weatherLocations(day, prevDay, hotelByDate)
       if (!from || !to || !day.date) return
       const [morning, night, fromGeo, toGeo] = await Promise.all([
         getSlotReadingCached(queryClient, from, day.date, 'morning'),

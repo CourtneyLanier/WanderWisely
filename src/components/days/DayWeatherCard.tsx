@@ -41,6 +41,7 @@ function WeatherSlot({
   location,
   query,
   sun,
+  onFixLocation,
 }: {
   title: string
   time: string
@@ -49,6 +50,8 @@ function WeatherSlot({
   /** Sunrise or sunset for this slot's location — computed, so it can show
    *  even when the temperature lookup failed. */
   sun: { icon: string; label: string } | null
+  /** Owner-only: jump to the day editor to set a manual weather location. */
+  onFixLocation?: () => void
 }) {
   const reading = query.data
   const isNormal = reading?.source === 'normal'
@@ -68,7 +71,31 @@ function WeatherSlot({
           <div className="h-3 w-20 bg-forest/[0.06] rounded" />
         </div>
       ) : query.isError || !reading ? (
-        <p className="text-sm text-forest/35 mt-1.5">Weather unavailable</p>
+        // The API errored — worth offering a retry, since it may be transient.
+        <div className="mt-1.5">
+          <p className="text-sm text-forest/35">Weather unavailable</p>
+          <button
+            onClick={() => query.refetch()}
+            className="text-xs text-deep-teal hover:text-forest transition-colors mt-0.5"
+          >
+            Retry
+          </button>
+        </div>
+      ) : reading.tempF === null ? (
+        // Different failure entirely: the place couldn't be geocoded. A bare
+        // dash here was the original complaint — it looked identical to a
+        // pending load and gave no hint that anything could be done.
+        <div className="mt-1.5">
+          <p className="text-sm text-forest/35">Couldn't find this location</p>
+          {onFixLocation && (
+            <button
+              onClick={onFixLocation}
+              className="text-xs text-deep-teal hover:text-forest transition-colors mt-0.5"
+            >
+              Set a weather location
+            </button>
+          )}
+        </div>
       ) : (
         <>
           <div className="flex items-baseline gap-2 mt-1">
@@ -135,11 +162,14 @@ export default function DayWeatherCard({
   to,
   date,
   variant = 'full',
+  onFixLocation,
 }: {
   from: string | null
   to: string | null
   date: string | null
   variant?: 'full' | 'compact'
+  /** Owner-only affordance; guest views are read-only and omit it. */
+  onFixLocation?: () => void
 }) {
   const { morning, night } = useDayWeather(from, to, date)
 
@@ -185,9 +215,11 @@ export default function DayWeatherCard({
           </p>
         ) : (
           <div className="flex gap-4">
-            <WeatherSlot title="Wake up" time="7 AM" location={from} query={morning} sun={sunrise} />
+            <WeatherSlot title="Wake up" time="7 AM" location={from} query={morning}
+              sun={sunrise} onFixLocation={onFixLocation} />
             <div className="w-px bg-forest/10 self-stretch" />
-            <WeatherSlot title="Bed down" time="9 PM" location={to} query={night} sun={sunset} />
+            <WeatherSlot title="Bed down" time="9 PM" location={to} query={night}
+              sun={sunset} onFixLocation={onFixLocation} />
           </div>
         )}
       </div>

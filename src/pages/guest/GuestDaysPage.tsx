@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { dayTitle } from '@/lib/dayTitle'
 import DayWeatherCard from '@/components/days/DayWeatherCard'
+import { weatherLocations } from '@/lib/weather'
 
 // ── types (local — guest functions return plain objects, not full Row types) ───
 
@@ -14,6 +15,8 @@ interface GTrip {
 interface GDay {
   id: string; trip_id: string; day_number: number; date: string | null
   departure_time: string | null; start_location: string | null; end_location: string | null
+  // Guests can't set these, but their weather honours them (migration 014).
+  start_weather_location: string | null; end_weather_location: string | null
   drive_miles: number | null; drive_hours: number | null; notes: string | null
 }
 interface GLodging {
@@ -423,10 +426,7 @@ export default function GuestDaysPage() {
             const today = new Date().toISOString().split('T')[0]
             const isToday = !!day.date && day.date === today
             const prevDay = i > 0 ? days[i - 1] : null
-            const weatherFrom = day.start_location
-              || (prevDay?.date ? hotelByDate[prevDay.date] ?? null : null)
-            const weatherTo = day.end_location
-              || (day.date ? hotelByDate[day.date] ?? null : null)
+            const { from: weatherFrom, to: weatherTo } = weatherLocations(day, prevDay, hotelByDate)
             return (
               <DayCard
                 key={day.id}
