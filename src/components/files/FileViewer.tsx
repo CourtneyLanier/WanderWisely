@@ -1,39 +1,39 @@
-// Full-screen in-app viewer for files attached to trip documents.
+// Full-screen in-app viewer for files held in a private Storage bucket —
+// trip-document attachments and reservation confirmation PDFs alike.
 //
 // Why in-app: window.open(blobUrl) is popup-blocked after async work in mobile
-// Safari and does nothing at all in the installed (standalone) PWA, so on a
+// browsers and does nothing at all in the installed (standalone) PWA, so on a
 // phone attached PDFs simply never opened. This overlay renders everything
 // inside the app instead — images directly, PDFs page-by-page via pdf.js — and
 // works fully offline from the local file cache. A Share/Save button hands the
 // original file to the phone's share sheet (Save to Files, AirDrop, print, …).
 
 import { useState, useEffect, useRef } from 'react'
-import { getDocFileBlob, shareOrDownloadFile, formatBytes } from '@/lib/docFiles'
-import type { CachedDocFile } from '@/lib/docFileCache'
-import type { TripDocument } from '@/types'
+import { getFileBlob, shareOrDownloadFile, formatBytes, type StoredFileRef } from '@/lib/storedFiles'
+import type { CachedFile } from '@/lib/fileCache'
 
 // Cap canvas resolution — retina-crisp without huge memory use on long PDFs.
 const MAX_PIXEL_RATIO = 2
 
-export default function DocFileViewer({
-  doc,
+export default function FileViewer({
+  file: ref,
   onClose,
   onCached,
 }: {
-  doc: TripDocument
+  file: StoredFileRef
   onClose: () => void
   /** Called once the file is confirmed available locally (offline-ready). */
   onCached?: () => void
 }) {
-  const [file, setFile] = useState<CachedDocFile | null>(null)
+  const [file, setFile] = useState<CachedFile | null>(null)
   const [error, setError] = useState('')
   const [imgUrl, setImgUrl] = useState('')
   const [pdfStatus, setPdfStatus] = useState('') // progress text while rendering
   const [shareErr, setShareErr] = useState('')
   const pagesRef = useRef<HTMLDivElement>(null)
 
-  const isImage = (file?.type ?? doc.file_type ?? '').startsWith('image/')
-  const isPdf = (file?.type ?? doc.file_type ?? '') === 'application/pdf'
+  const isImage = (file?.type ?? ref.type).startsWith('image/')
+  const isPdf = (file?.type ?? ref.type) === 'application/pdf'
 
   // Lock background scroll + close on Escape while the overlay is up.
   useEffect(() => {
@@ -50,7 +50,7 @@ export default function DocFileViewer({
   // Load the file blob (local cache first, Storage fallback).
   useEffect(() => {
     let active = true
-    getDocFileBlob(doc)
+    getFileBlob(ref)
       .then((f) => {
         if (!active) return
         setFile(f)
@@ -59,7 +59,7 @@ export default function DocFileViewer({
       .catch((e) => { if (active) setError((e as Error).message) })
     return () => { active = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc.id])
+  }, [ref.cacheKey])
 
   // Images: plain object URL.
   useEffect(() => {
@@ -136,8 +136,8 @@ export default function DocFileViewer({
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 shrink-0">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-white truncate">{doc.file_name ?? 'File'}</p>
-          <p className="text-[11px] text-white/50">{formatBytes(doc.file_size)}</p>
+          <p className="text-sm font-medium text-white truncate">{ref.name || 'File'}</p>
+          <p className="text-[11px] text-white/50">{formatBytes(ref.size)}</p>
         </div>
         <button
           onClick={handleShare}
@@ -173,7 +173,7 @@ export default function DocFileViewer({
         {!error && file && isImage && imgUrl && (
           <img
             src={imgUrl}
-            alt={doc.file_name ?? 'Attached image'}
+            alt={ref.name || 'Attached image'}
             className="max-w-full h-auto mx-auto rounded-lg shadow-lg"
           />
         )}

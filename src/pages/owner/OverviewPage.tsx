@@ -6,6 +6,7 @@ import { dayTitle } from '@/lib/dayTitle'
 import { useAppStore } from '@/store/useAppStore'
 import { useTrip } from '@/hooks/useTrip'
 import SettleBanner from '@/components/split/SettleBanner'
+import { ensureReservationPdfCached } from '@/lib/reservationPdfs'
 import type { Budget, SpendingLog, Day, Lodging, Activity, Reservation } from '@/types'
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -266,9 +267,14 @@ export default function OverviewPage() {
         ])
       )
 
-      // Warm Workbox cache for all PDF files
-      const pdfUrls = reservations.filter((r) => r.pdf_url).map((r) => r.pdf_url!)
-      await Promise.all(pdfUrls.map((url) => fetch(url, { cache: 'force-cache' }).catch(() => null)))
+      // Pull every confirmation PDF into the local file cache. These live in a
+      // private bucket, so they have to be downloaded through the authenticated
+      // client — a plain fetch() of a URL can't reach them.
+      await Promise.all(
+        reservations
+          .filter((r) => r.pdf_path)
+          .map((r) => ensureReservationPdfCached(r).catch(() => false))
+      )
 
       setLastSynced(new Date())
       setSyncState('done')

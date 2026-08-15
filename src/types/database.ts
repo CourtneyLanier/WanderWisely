@@ -132,6 +132,7 @@ type ReservationInsert = {
   raw_email_text?: string | null
   cost?: number | null
   pdf_url?: string | null
+  pdf_path?: string | null
   listing_url?: string | null
   paid?: boolean
 }
@@ -352,6 +353,7 @@ export interface Database {
           raw_email_text: string | null
           cost: number | null
           pdf_url: string | null
+          pdf_path: string | null
           listing_url: string | null
           paid: boolean
         }

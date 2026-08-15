@@ -6,6 +6,9 @@ import { dayTitle } from '@/lib/dayTitle'
 import { useAppStore } from '@/store/useAppStore'
 import SuggestStopsSection from '@/components/days/SuggestStopsSection'
 import DayWeatherCard from '@/components/days/DayWeatherCard'
+import FileViewer from '@/components/files/FileViewer'
+import { reservationPdfRef, MAX_PARSE_PDF_BYTES } from '@/lib/reservationPdfs'
+import type { StoredFileRef } from '@/lib/storedFiles'
 import type { Day, Lodging, Activity, LodgingType, ActivityType, MealSlot, Reservation } from '@/types'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -248,6 +251,9 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
   const [parsing, setParsing] = useState(false)
   const [parseError, setParseError] = useState('')
   const [copiedConf, setCopiedConf] = useState(false)
+  // Confirmation PDFs live in a private bucket — they open in the in-app viewer,
+  // never as a link. See src/lib/reservationPdfs.ts.
+  const [viewingPdf, setViewingPdf] = useState<StoredFileRef | null>(null)
   const pdfInputRef = useRef<HTMLInputElement>(null)
 
   function copyConf(num: string) {
@@ -260,8 +266,7 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
     setParsing(true)
     setParseError('')
     try {
-      const MAX_PDF_BYTES = 5 * 1024 * 1024
-      if (file.size > MAX_PDF_BYTES) {
+      if (file.size > MAX_PARSE_PDF_BYTES) {
         throw new Error(`PDF is ${(file.size / 1024 / 1024).toFixed(1)} MB — please use a file under 5 MB.`)
       }
       const base64 = await new Promise<string>((resolve, reject) => {
@@ -558,15 +563,13 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
                 📍 Map
               </a>
             )}
-            {hotelReservations[0]?.pdf_url && (
-              <a
-                href={hotelReservations[0].pdf_url}
-                target="_blank"
-                rel="noopener noreferrer"
+            {hotelReservations[0] && reservationPdfRef(hotelReservations[0]) && (
+              <button
+                onClick={() => setViewingPdf(reservationPdfRef(hotelReservations[0]))}
                 className="text-xs text-deep-teal hover:text-forest transition-colors"
               >
                 📄 PDF
-              </a>
+              </button>
             )}
             {(lodging.nightly_rate || lodging.total_cost) && (
               <span className="text-xs text-gold font-mono ml-auto">
@@ -616,11 +619,12 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
                       ${r.cost.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     </p>
                   )}
-                  {r.pdf_url && (
-                    <a href={r.pdf_url} target="_blank" rel="noopener noreferrer"
+                  {reservationPdfRef(r) && (
+                    <button
+                      onClick={() => setViewingPdf(reservationPdfRef(r))}
                       className="text-xs text-deep-teal underline mt-1 block">
                       📄 View PDF
-                    </a>
+                    </button>
                   )}
                 </div>
               </div>
@@ -726,6 +730,10 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
             </button>
           </div>
         </div>
+      )}
+
+      {viewingPdf && (
+        <FileViewer file={viewingPdf} onClose={() => setViewingPdf(null)} />
       )}
     </div>
   )
