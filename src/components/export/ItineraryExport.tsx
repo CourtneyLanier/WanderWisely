@@ -5,6 +5,7 @@ import {
   buildExportHtml,
   downloadHtml,
   openPrintWindow,
+  isIOS,
   safeFileName,
   type ExportContent,
   type MealStyle,
@@ -44,6 +45,7 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
   const [includeWeather, setIncludeWeather] = useState(true)
   const [busy, setBusy] = useState<null | 'html' | 'pdf'>(null)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
 
   const showMealStyle = content !== 'itinerary'
   const showWeather = content !== 'meal_plan'
@@ -54,6 +56,7 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
   async function run(kind: 'html' | 'pdf') {
     setBusy(kind)
     setError('')
+    setNotice('')
     try {
       const wantWeather = includeWeather && content !== 'meal_plan'
       const data = await gatherExportData(tripId, includeFiles, wantWeather ? queryClient : null)
@@ -61,6 +64,14 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
       if (kind === 'html') {
         const html = buildExportHtml(data, opts, false)
         downloadHtml(html, `${safeFileName(data.trip.name)}_${fileSuffix}.html`)
+      } else if (isIOS()) {
+        // No window.print() on iOS — the print window would open and sit there.
+        // Hand over the file and say what to actually do with it.
+        const html = buildExportHtml(data, opts, false)
+        downloadHtml(html, `${safeFileName(data.trip.name)}_${fileSuffix}.html`)
+        setNotice(
+          'Downloaded. Open the file, then Share → Print, pinch out on the preview, and Save to Files.'
+        )
       } else {
         const html = buildExportHtml(data, opts, true)
         const opened = openPrintWindow(html)
@@ -182,6 +193,7 @@ export default function ItineraryExport({ tripId }: { tripId: string }) {
       </label>
 
       {error && <p className="text-xs text-terracotta mb-3">{error}</p>}
+      {notice && <p className="text-xs text-deep-teal bg-deep-teal/8 rounded-lg px-3 py-2 mb-3">{notice}</p>}
 
       <div className="flex gap-2">
         <button

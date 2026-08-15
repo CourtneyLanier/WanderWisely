@@ -10,6 +10,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { getDocFileBlob } from '@/lib/docFiles'
 import { dayRoute } from '@/lib/dayTitle'
+import { normalizeUrl, displayUrl } from '@/lib/urls'
 import { getSlotReadingCached, weatherLocations, type WeatherReading } from '@/lib/weather'
 import { geocode } from '@/lib/geocoding'
 import { sunTimes, formatInZone, formatDaylight } from '@/lib/sun'
@@ -407,6 +408,17 @@ function walletDateHotel(data: ExportData, day: Day): Reservation | undefined {
   return (data.reservationsByDate[day.date] ?? []).find((r) => r.type === 'hotel')
 }
 
+/**
+ * Add an activity's link to a meta row. The printed page shows the FULL URL,
+ * minus only the scheme and a leading www., so it can be typed back in from
+ * paper — that's the whole point of it being on a printout.
+ */
+function urlBit(url: string | null, bits: string[]): void {
+  const href = normalizeUrl(url)
+  if (!href) return
+  bits.push(`<a class="urllink" href="${esc(href)}">🔗 ${esc(displayUrl(href))}</a>`)
+}
+
 function mealLine(m: Activity, opts: ExportOptions): string {
   const icon = SLOT_ICON[m.meal_slot as MealSlot] ?? '🍽️'
   const slot = m.meal_slot ? SLOT_LABEL[m.meal_slot as MealSlot] : 'Meal'
@@ -414,6 +426,7 @@ function mealLine(m: Activity, opts: ExportOptions): string {
   if (m.time) bits.push(esc(fmtTime12(m.time)))
   if (m.address) bits.push(`<a class="maplink" href="${esc(mapsHref(m.address))}">📍 ${esc(m.address)}</a>`)
   if (opts.includePrices && m.estimated_cost != null) bits.push(`<span class="cost">${esc(money(m.estimated_cost))}</span>`)
+  urlBit(m.url, bits)
   return `<div class="item">
     <span class="item-icon">${icon}</span>
     <div class="item-body">
@@ -431,6 +444,7 @@ function planLine(a: Activity, opts: ExportOptions): string {
   if (a.address) bits.push(`<a class="maplink" href="${esc(mapsHref(a.address))}">📍 ${esc(a.address)}</a>`)
   if (a.confirmation_number) bits.push(`<span class="conf">#${esc(a.confirmation_number)}</span>`)
   if (opts.includePrices && a.estimated_cost != null) bits.push(`<span class="cost">${esc(money(a.estimated_cost))}</span>`)
+  urlBit(a.url, bits)
   return `<div class="item">
     <span class="item-icon">${a.is_booked ? '✓' : '•'}</span>
     <div class="item-body">
@@ -447,6 +461,7 @@ function walletLine(r: Reservation): string {
   if (r.time) bits.push(esc(fmtTime12(r.time)))
   if (r.confirmation_number) bits.push(`<span class="conf">#${esc(r.confirmation_number)}</span>`)
   if (r.address) bits.push(`<a class="maplink" href="${esc(mapsHref(r.address))}">📍 ${esc(r.address)}</a>`)
+  urlBit(r.listing_url, bits)
   return `<div class="item">
     <span class="item-icon">${icon}</span>
     <div class="item-body">
@@ -722,6 +737,7 @@ ${p} .item{padding:4px 0}
 ${p} .item-icon{font-size:14px}
 ${p} .item-name{font-size:13px}
 ${p} .item-meta{font-size:11px;margin-top:2px}
+${p} .urllink{font-size:10px;margin-top:1px}
 ${p} .pill-row{gap:6px;margin-top:6px}
 ${p} .pill{padding:3px 9px;font-size:11px}
 ${p} .meta-row{margin-top:6px}
@@ -788,6 +804,13 @@ a{color:var(--deep-teal);text-decoration:none}
 /* Sun times sit on their own line so a long day never reflows the meta row. */
 .weather-sun{display:block;font-size:12px;color:rgba(45,61,30,.5);margin-top:2px}
 .weather-none{font-style:italic;color:rgba(45,61,30,.4)}
+/* Screen-only: which days had to shrink hardest, shown before you print
+   rather than discovered as a stray second page after. */
+.fitwarn{display:none;position:fixed;left:12px;bottom:12px;max-width:min(420px,calc(100vw - 24px));
+  background:#FFF8E7;border:1px solid rgba(198,146,50,.45);border-radius:10px;
+  padding:10px 12px;font-size:12px;line-height:1.45;color:#5A4A21;
+  box-shadow:0 4px 14px rgba(0,0,0,.12);z-index:50}
+.fitwarn-hint{color:rgba(90,74,33,.7)}
 .muted{color:rgba(45,61,30,.4);font-style:italic}
 /* Blocks */
 .block{background:var(--white-warm);border:1px solid rgba(45,61,30,.11);border-radius:14px;
@@ -823,6 +846,11 @@ a{color:var(--deep-teal);text-decoration:none}
 .item-meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px;
   font-size:13px;color:rgba(45,61,30,.6)}
 .item-meta>*{min-width:0;max-width:100%}
+/* A full URL is one long unbreakable token. Without overflow-wrap it forces
+   horizontal overflow, which FIT_SCRIPT then tries to solve by shrinking the
+   entire page. Own line, last, so it costs a line instead of reflowing the row. */
+.urllink{display:block;width:100%;font-size:11px;margin-top:2px;
+  overflow-wrap:anywhere;word-break:break-word;color:rgba(45,61,30,.55)}
 .item-meta .dot{color:rgba(45,61,30,.3)}
 .notes-text{font-size:14px;color:rgba(45,61,30,.7);font-style:italic;white-space:pre-wrap}
 /* Attached files */
@@ -925,23 +953,81 @@ const LOGO_SCRIPT = `
 const FIT_SCRIPT = `
 (function(){
   var PAGE_H=974; /* 10.15in at 96dpi — inside Letter and A4 with 0.4in margins */
+  var FLOOR=0.5;  /* below this it's unreadable in a notebook */
+  var WARN=0.55;  /* close enough to the floor to be worth flagging */
+
+  /* zoom is non-standard: Chrome/Safari/Edge fine, Firefox only from v126.
+     Without a fallback the fit logic is a silent no-op and every page spills. */
+  var useZoom = window.CSS && CSS.supports && CSS.supports('zoom','0.5');
+
+  function apply(s,z){
+    if(useZoom){ s.style.setProperty('--fitzoom',z.toFixed(3)); return }
+    var inner=s.querySelector('.slide-inner');
+    if(!inner)return;
+    /* Clear first: scale() doesn't reflow, so the explicit height set on the
+       previous iteration would otherwise be measured as the natural one and
+       the scale would compound. */
+    inner.style.transform='';
+    inner.style.height='';
+    var natural=inner.scrollHeight;
+    inner.style.transformOrigin='top left';
+    inner.style.transform='scale('+z.toFixed(3)+')';
+    inner.style.height=(natural*z)+'px';
+  }
+  function reset(s){
+    s.style.removeProperty('--fitzoom');
+    var inner=s.querySelector('.slide-inner');
+    if(inner){inner.style.transform='';inner.style.height=''}
+  }
+
+  var tight=[];
   function fit(){
+    tight=[];
     document.body.classList.add('print-sim');
     [].slice.call(document.querySelectorAll('.slide')).forEach(function(s){
       if(s.classList.contains('cover')||s.classList.contains('attachment'))return;
-      s.style.removeProperty('--fitzoom');
+      reset(s);
       var h=s.scrollHeight,z=1;
-      for(var k=0;k<4&&h>PAGE_H&&z>0.5;k++){
-        z=Math.max(0.5,z*PAGE_H/h*0.985);
-        s.style.setProperty('--fitzoom',z.toFixed(3));
+      /* 6 iterations rather than 4 — they're cheap and dense pages converge slowly. */
+      for(var k=0;k<6&&h>PAGE_H&&z>FLOOR;k++){
+        z=Math.max(FLOOR,z*PAGE_H/h*0.985);
+        apply(s,z);
         h=s.scrollHeight;
+      }
+      if(z<=WARN){
+        var t=s.querySelector('.slide-title,h2,h1');
+        tight.push({label:(t&&t.textContent||'').trim()||'A day',floored:h>PAGE_H});
       }
     });
     document.body.classList.remove('print-sim');
+    report();
   }
+
+  /* Screen-only notice (see .fitwarn in the print stylesheet) so a day that had
+     to shrink past the floor is visible BEFORE you send it to paper, rather
+     than discovered as a stray second page afterwards. */
+  function report(){
+    var box=document.getElementById('fitwarn');
+    if(!box)return;
+    if(!tight.length){box.style.display='none';return}
+    var spill=tight.filter(function(t){return t.floored});
+    box.style.display='block';
+    box.innerHTML='<strong>'+(spill.length?'May print onto a second page':'Tight fit when printed')+
+      '</strong><br>'+tight.map(function(t){return t.label}).join(' · ')+
+      '<br><span class="fitwarn-hint">Trim a plan, a meal, or the longest links on '+
+      (tight.length>1?'these days':'this day')+' to keep one page each.</span>';
+  }
+
   window.addEventListener('beforeprint',fit);
   var mq=window.matchMedia&&window.matchMedia('print');
   if(mq&&mq.addListener)mq.addListener(function(m){if(m.matches)fit()});
+
+  /* Also fit once on load. iOS Safari has no window.print(), so the Share →
+     Print path may never fire beforeprint; baking the zoom in up front means
+     the paper output is right either way. Cheap, and it's what powers the
+     warning above. */
+  if(document.readyState==='complete')setTimeout(fit,0);
+  else window.addEventListener('load',function(){setTimeout(fit,0)});
 })();
 `
 
@@ -989,6 +1075,7 @@ export function buildExportHtml(data: ExportData, opts: ExportOptions, autoPrint
 </head>
 <body>
 <div class="deck">${slides.join('\n')}</div>
+<div id="fitwarn" class="fitwarn no-print"></div>
 <div class="hint no-print">← → to navigate</div>
 <div class="controls no-print">
   <button id="prev" aria-label="Previous">‹</button>
@@ -1017,6 +1104,22 @@ export function downloadHtml(html: string, fileName: string): void {
  * Open the export in a new window and trigger the print dialog (Save as PDF).
  * Returns false if a popup blocker prevented the window from opening.
  */
+/**
+ * iOS Safari has no window.print(), so the print-window path is a silent
+ * no-op there — the button appears to do nothing. Covers the iPadOS
+ * desktop-mode case too, where the UA claims Macintosh but touch points give
+ * it away.
+ *
+ * NOT verified on hardware: this project's only test device is Android. The
+ * fallback is a download plus instructions, which is strictly better than a
+ * dead button either way.
+ */
+export function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false
+  if (/iP(hone|ad|od)/.test(navigator.userAgent)) return true
+  return navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)
+}
+
 export function openPrintWindow(html: string): boolean {
   const w = window.open('', '_blank')
   if (!w) return false

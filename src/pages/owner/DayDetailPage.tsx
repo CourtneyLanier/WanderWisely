@@ -7,6 +7,8 @@ import { useAppStore } from '@/store/useAppStore'
 import SuggestStopsSection from '@/components/days/SuggestStopsSection'
 import DayWeatherCard from '@/components/days/DayWeatherCard'
 import { weatherLocations } from '@/lib/weather'
+import { normalizeUrl, displayUrl } from '@/lib/urls'
+import Linkified from '@/components/Linkified'
 import FileViewer from '@/components/files/FileViewer'
 import { reservationPdfRef, MAX_PARSE_PDF_BYTES } from '@/lib/reservationPdfs'
 import type { StoredFileRef } from '@/lib/storedFiles'
@@ -178,7 +180,7 @@ function DayHeader({
             </p>
           )}
           {!editing && day.notes && (
-            <p className="text-xs text-forest/60 mt-1 italic">{day.notes}</p>
+            <p className="text-xs text-forest/60 mt-1 italic"><Linkified text={day.notes} /></p>
           )}
         </div>
         <div className="flex items-center gap-3 ml-2">
@@ -426,7 +428,7 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
         name: f.name || null,
         type: f.type || null,
         address: f.address || null,
-        listing_url: f.listing_url || null,
+        listing_url: normalizeUrl(f.listing_url),
         confirmation_number: f.confirmation_number || null,
         check_in_time: f.check_in_time || null,
         check_out_time: f.check_out_time || null,
@@ -793,6 +795,30 @@ function LodgingSection({ dayId, tripId, date }: { dayId: string; tripId?: strin
   )
 }
 
+/**
+ * The saved link on an activity or meal. The guest view has rendered this all
+ * along; the owner view didn't, which meant opening Edit and copy-pasting the
+ * URL out just to follow your own booking link.
+ *
+ * Shows the shortened host+path rather than a bare arrow — on a phone it's a
+ * much bigger tap target, and you can see where it goes before tapping.
+ */
+function ActivityLink({ url }: { url: string | null }) {
+  const href = normalizeUrl(url)
+  if (!href) return null
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-center gap-1 text-xs text-deep-teal hover:text-forest underline mt-0.5 max-w-full break-all"
+    >
+      🔗 {displayUrl(href)}
+    </a>
+  )
+}
+
 // ─── Activity form ────────────────────────────────────────────────────────────
 
 const EMPTY_ACTIVITY = {
@@ -846,7 +872,8 @@ function ActivityForm({
         time: f.time || null,
         address: f.address || null,
         confirmation_number: f.confirmation_number || null,
-        url: f.url || null,
+        // Normalized so a scheme-less entry doesn't become a relative link.
+        url: normalizeUrl(f.url),
         estimated_cost: f.estimated_cost ? parseFloat(f.estimated_cost) : null,
         notes: f.notes || null,
         is_booked: f.is_booked,
@@ -1062,6 +1089,7 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
                     {meal.confirmation_number && (
                       <p className="text-xs text-forest/40 font-mono mt-0.5">#{meal.confirmation_number}</p>
                     )}
+                    <ActivityLink url={meal.url} />
                   </div>
                 </div>
                 <div className="flex gap-3 shrink-0 ml-3">
@@ -1108,6 +1136,7 @@ function ActivitiesSection({ dayId }: { dayId: string }) {
                   {a.confirmation_number && (
                     <p className="text-xs text-forest/40 font-mono mt-0.5">#{a.confirmation_number}</p>
                   )}
+                  <ActivityLink url={a.url} />
                 </div>
                 <div className="flex gap-3 shrink-0">
                   <button
