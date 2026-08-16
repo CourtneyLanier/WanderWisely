@@ -11,18 +11,41 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get('code')
 
+    // A magic link always carries a token: ?code=… (PKCE) or #access_token=…
+    // (implicit). Arriving without one — link copied incompletely, opened
+    // directly, or stripped in transit — is a state that will NEVER resolve,
+    // so it has to be reported rather than waited on.
+    const hash = window.location.hash
+    const hasToken =
+      !!code ||
+      hash.includes('access_token') ||
+      hash.includes('type=magiclink') ||
+      hash.includes('type=recovery')
+
+    // Backstop for the opposite failure: a token is present but nothing ever
+    // settles (network stall, unreachable auth host). Without this the page
+    // pulses the logo indefinitely and the user is given nothing to act on.
+    const stuck = window.setTimeout(() => {
+      setError('Signing in is taking longer than expected. The link may have expired — please request a new one.')
+    }, 15_000)
+
     if (code) {
       // PKCE flow — Supabase project has PKCE enabled (newer default).
       // Exchange the one-time code for a session.
       supabase.auth.exchangeCodeForSession(code).then(({ data, error: err }) => {
+        window.clearTimeout(stuck)
         if (err) {
           setError(err.message)
         } else if (data.session) {
           setUser(data.session.user)
           navigate('/overview', { replace: true })
+        } else {
+          // No error and no session: the code was structurally valid but bought
+          // nothing — almost always a link that was already redeemed.
+          setError('This link has expired or was already used. Please request a new one.')
         }
       })
-      return
+      return () => window.clearTimeout(stuck)
     }
 
     // Implicit flow — token is in the URL hash (#access_token=…).
@@ -30,8 +53,12 @@ export default function AuthCallbackPage() {
     // getSession() catches the case where that finished before this component mounted.
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
+        window.clearTimeout(stuck)
         setUser(session.user)
         navigate('/overview', { replace: true })
+      } else if (!hasToken) {
+        window.clearTimeout(stuck)
+        setError("This link doesn't have a sign-in token in it. It may have been copied incompletely — request a new one and open it directly from the email.")
       }
     })
 
@@ -39,15 +66,20 @@ export default function AuthCallbackPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
+        window.clearTimeout(stuck)
         setUser(session.user)
         navigate('/overview', { replace: true })
       }
       if (event === 'SIGNED_OUT') {
+        window.clearTimeout(stuck)
         setError('This link has expired or was already used. Please request a new one.')
       }
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      window.clearTimeout(stuck)
+      subscription.unsubscribe()
+    }
   }, [navigate, setUser])
 
   if (error) {
