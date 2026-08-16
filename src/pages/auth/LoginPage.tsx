@@ -16,7 +16,6 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [notAllowed, setNotAllowed] = useState(false)
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -26,27 +25,14 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        // Private beta: never create a new account from the login form.
-        // Approved testers are added manually in the Supabase dashboard.
-        shouldCreateUser: false,
+        // Signup is open: the magic link creates the account if the email is
+        // new, and signs in if it isn't. Same form either way.
         emailRedirectTo: `${window.location.origin}/auth/callback`,
       },
     })
 
     if (error) {
-      // With signups off, an unknown email comes back as a "signups not
-      // allowed" error. Show a friendly private-beta message instead of the
-      // raw Supabase text.
-      const msg = error.message.toLowerCase()
-      if (
-        msg.includes('signups not allowed') ||
-        msg.includes('signup is disabled') ||
-        msg.includes('not allowed for otp')
-      ) {
-        setNotAllowed(true)
-      } else {
-        setError(error.message)
-      }
+      setError(error.message)
       setLoading(false)
     } else {
       setSent(true)
@@ -57,7 +43,6 @@ export default function LoginPage() {
   function handleSendAgain() {
     setSent(false)
     setError(null)
-    setNotAllowed(false)
   }
 
   return (
@@ -66,26 +51,7 @@ export default function LoginPage() {
       <h1 className="font-display text-3xl text-forest mb-1">WanderWisely</h1>
       <p className="text-forest/50 text-sm mb-8 tracking-wide">Your personal travel wallet</p>
 
-      {notAllowed ? (
-        <div className="card text-center max-w-sm w-full space-y-3">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-            className="text-gold mx-auto">
-            <path d="M12 2 2 7v6c0 5 4 8 10 9 6-1 10-4 10-9V7z" />
-          </svg>
-          <p className="text-forest font-display text-lg">We're in private beta</p>
-          <p className="text-forest/60 text-sm">
-            WanderWisely isn't open to the public just yet. We didn't find an
-            account for <strong>{email}</strong>.
-            <br />
-            If you were invited, double-check the email address. Otherwise, hang
-            tight — we'll be opening up soon.
-          </p>
-          <button onClick={handleSendAgain} className="btn-secondary w-full mt-2">
-            Try a different email
-          </button>
-        </div>
-      ) : sent ? (
+      {sent ? (
         <div className="card text-center max-w-sm w-full space-y-3">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
@@ -129,12 +95,8 @@ export default function LoginPage() {
           </button>
 
           <p className="text-center text-xs text-forest/40">
-            A sign-in link will be emailed to you.
-          </p>
-
-          <p className="text-center text-xs text-forest/50 bg-gold/10 rounded-lg px-3 py-2">
-            WanderWisely is in private beta — sign-in is limited to invited
-            testers for now.
+            A sign-in link will be emailed to you. New here? Your account is
+            created the first time you use it.
           </p>
         </form>
       )}
