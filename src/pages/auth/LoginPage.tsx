@@ -1,3 +1,13 @@
+// Sign-in / sign-up form.
+//
+// Whether a NEW email can create an account here is controlled by TWO switches
+// that must agree: the `shouldCreateUser` option on the signInWithOtp call
+// below, and the Supabase dashboard's "Allow new users to sign up" toggle.
+// Changing one without the other yields a form that looks broken rather than
+// one that looks locked, and nothing logs an error when they disagree.
+//
+// Read docs/AUTH-SIGNUP-GATE.md before flipping either one — the order you
+// move them in matters.
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
